@@ -89,6 +89,46 @@ def test_screener_open_relvol_preset(tmp_path):
     assert "COLD" not in tickers  # price 3 < 5 and tiny volume
 
 
+def test_screener_empty_after_first_filter(tmp_path):
+    """Live Coolify crash: lookback iloc[0] on an empty frame after rel_vol_at filters everyone out."""
+    wh = DuckDbWarehouse(tmp_path)
+    secs = {s.ticker: s for s in wh.upsert_securities([SecurityDraft(ticker="SLOW", name="Slow", exchange="NYSE")])}
+    as_of = date(2026, 9, 20)
+    bars = []
+    opens = []
+    for d in range(1, 21):
+        day = date(2026, 9, d)
+        bars.append(
+            DailyBar(
+                security_id=secs["SLOW"].security_id,
+                date=day,
+                open=10,
+                high=11,
+                low=9,
+                close=10,
+                adj_close=10,
+                volume=2_000_000,
+            )
+        )
+        opens.append(
+            MinuteOpenBar(
+                security_id=secs["SLOW"].security_id,
+                date=day,
+                window_minutes=5,
+                open=10,
+                high=10,
+                low=10,
+                close=10,
+                volume=1,
+            )
+        )
+    wh.write_daily_bars(bars)
+    wh.write_minute_open(opens)
+    wh.rewrite_derived(as_of, 14, 14, 14, 5)
+    rows = ScreenerService(wh).run(ScreenerRequest(preset="open_relvol"), as_of)
+    assert rows == []
+
+
 def test_query_avg_volume(tmp_path):
     wh = DuckDbWarehouse(tmp_path)
     secs = wh.upsert_securities([SecurityDraft(ticker="AAA", name="Aaa", exchange="NYSE")])

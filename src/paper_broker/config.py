@@ -31,4 +31,12 @@ class Settings(BaseSettings):
         "http://localhost:5173,http://127.0.0.1:5173,"
         "http://paper-broker.oppenheimer.studio,https://paper-broker.oppenheimer.studio"
     )
+    mcp_allowed_hosts: str = (
+        "127.0.0.1:*,localhost:*,[::1]:*,"
+        "paper-broker-mcp.oppenheimer.studio,paper-broker-mcp.oppenheimer.studio:*"
+    )
+    mcp_allowed_origins: str = (
+        "http://127.0.0.1:*,http://localhost:*,"
+        "http://paper-broker-mcp.oppenheimer.studio,https://paper-broker-mcp.oppenheimer.studio"
+    )
     web_dist: Path = Path("./web/dist")

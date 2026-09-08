@@ -579,10 +579,9 @@ class DuckDbWarehouse:
             "market_cap": "market_cap",
         }
         for f in filters:
+            if df.empty:
+                return []
             col = field_col[f.field]
-            if f.lookback and f.lookback != int(df[f"{f.field}_lookback"].iloc[0] if f.field + "_lookback" in df.columns else -1):
-                # snapshot is default 14; other lookbacks are recomputed in ScreenerService
-                pass
             series = df[col]
             op = f.op
             val = f.value
@@ -597,6 +596,8 @@ class DuckDbWarehouse:
             else:
                 mask = series == val
             df = df[mask.fillna(False)]
+        if df.empty:
+            return []
         sort = req.sort or "rel_vol_at"
         if sort in df.columns:
             df = df.sort_values(sort, ascending=req.sort_dir != "desc", na_position="last")

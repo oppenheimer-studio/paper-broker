@@ -4,6 +4,7 @@ import json
 from datetime import date
 
 from mcp.server.fastmcp import FastMCP
+from mcp.server.transport_security import TransportSecuritySettings
 
 from paper_broker.composition import Container
 from paper_broker.domain.models import QueryRequest, ScreenerRequest
@@ -12,8 +13,23 @@ from paper_broker.logging import get_logger
 log = get_logger("mcp")
 
 
+def _csv(value: str) -> list[str]:
+    return [part.strip() for part in value.split(",") if part.strip()]
+
+
 def build_mcp(container: Container) -> FastMCP:
-    mcp = FastMCP("paper-broker", json_response=True)
+    settings = container.settings
+    mcp = FastMCP(
+        "paper-broker",
+        json_response=True,
+        host=settings.host,
+        port=settings.mcp_port,
+        transport_security=TransportSecuritySettings(
+            enable_dns_rebinding_protection=True,
+            allowed_hosts=_csv(settings.mcp_allowed_hosts),
+            allowed_origins=_csv(settings.mcp_allowed_origins),
+        ),
+    )
 
     @mcp.tool()
     def get_clock() -> str:

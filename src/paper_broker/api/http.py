@@ -103,6 +103,9 @@ def create_app(container: Container) -> FastAPI:
             rows = container.screener.run(req, as_of)
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except Exception as exc:
+            log.exception("screener_failed")
+            raise HTTPException(status_code=500, detail=str(exc)) from exc
         return {"as_of": as_of, "n": len(rows), "rows": [r.model_dump() for r in rows]}
 
     @app.get("/v1/securities")

@@ -27,6 +27,14 @@ def test_root_is_404_without_web_dist(tmp_path):
     assert client.get("/v1/clock").status_code == 200
 
 
+def test_mcp_allows_coolify_host(tmp_path):
+    from paper_broker.api.mcp_app import build_mcp
+
+    mcp = build_mcp(build(Settings(lake_path=tmp_path, cors_origins="http://localhost:5173")))
+    hosts = mcp.settings.transport_security.allowed_hosts
+    assert "paper-broker-mcp.oppenheimer.studio" in hosts
+
+
 def test_notifications_endpoint(tmp_path):
     from fastapi.testclient import TestClient
 
