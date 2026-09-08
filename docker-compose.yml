@@ -1,0 +1,22 @@
+services:
+  paper-broker:
+    build: .
+    ports:
+      - "8080:8080"
+      - "8081:8081"
+    environment:
+      LAKE_PATH: /data/lake
+      ADMIN_KEY: ${ADMIN_KEY:-changeme}
+      LOG_JSON: "true"
+      INGEST_MAX_TICKERS: ${INGEST_MAX_TICKERS:-50}
+      INGEST_CONCURRENCY: "6"
+      MINIO_ENDPOINT: ${MINIO_ENDPOINT:-}
+      MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY:-}
+      MINIO_SECRET_KEY: ${MINIO_SECRET_KEY:-}
+      MINIO_BUCKET: ${MINIO_BUCKET:-paper-broker}
+    volumes:
+      - paper_broker_lake:/data/lake
+    restart: unless-stopped
+
+volumes:
+  paper_broker_lake:
