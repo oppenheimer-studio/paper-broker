@@ -13,6 +13,4 @@ Esta etapa: warehouse, API de consulta, MCP, job diario catch-up/idempotente, y 
 | [screener.md](screener.md) | Filtros configurables y el caso relvol 5m |
 | [ops.md](ops.md) | Coolify, cron, MinIO, primer deploy |
 
-Host: Coolify. Lago: parquet (disco local y/o MinIO). Lectura analítica: DuckDB. Supabase Wrappers entra cuando el FDW contra MinIO esté probado; hasta entonces la API consulta DuckDB directo.
-
-Deploy: [ops.md](ops.md).
+Host: Coolify. Deploy: push a `main` ([ops.md](ops.md)). Migraciones: [db/README.md](../db/README.md).

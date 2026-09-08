@@ -1,0 +1,94 @@
+from __future__ import annotations
+
+from pathlib import Path
+
+from paper_broker.config import Settings
+from paper_broker.logging import configure_logging, get_logger
+
+log = get_logger("migrate")
+
+ROOT = Path(__file__).resolve().parents[2]
+MIGRATIONS = ROOT / "db" / "migrations"
+
+
+def _optional_file(path: Path) -> bool:
+    return path.name.startswith("002")
+
+
+def ensure_minio_bucket(settings: Settings) -> None:
+    if not (settings.minio_endpoint and settings.minio_access_key and settings.minio_secret_key):
+        log.info("minio_skip", reason="no credentials")
+        return
+    from paper_broker.adapters.minio_sync import MinioSync
+
+    client = MinioSync(
+        settings.minio_endpoint,
+        settings.minio_access_key,
+        settings.minio_secret_key,
+        settings.minio_bucket,
+        secure=settings.minio_secure,
+    )
+    client.ensure_bucket()
+
+
+def apply_postgres(settings: Settings) -> None:
+    if not settings.database_url:
+        log.info("postgres_skip", reason="DATABASE_URL empty")
+        return
+    import psycopg
+
+    files = sorted(MIGRATIONS.glob("*.sql"))
+    if not files:
+        log.warning("no_migration_files", path=str(MIGRATIONS))
+        return
+    with psycopg.connect(
+        settings.database_url,
+        autocommit=True,
+        cursor_factory=psycopg.ClientCursor,
+    ) as con:
+        applied: set[str] = set()
+        try:
+            rows = con.execute("SELECT version FROM paper_broker.schema_migrations").fetchall()
+            applied = {r[0] for r in rows}
+        except psycopg.Error:
+            log.info("schema_migrations_missing", hint="will apply 001")
+        for path in files:
+            version = path.stem
+            if version in applied:
+                log.info("migration_skip", version=version)
+                continue
+            sql = path.read_text(encoding="utf-8")
+            log.info("migration_apply", version=version)
+            try:
+                con.execute(sql)
+                con.execute(
+                    """
+                    INSERT INTO paper_broker.schema_migrations(version)
+                    VALUES (%s)
+                    ON CONFLICT (version) DO NOTHING
+                    """,
+                    (version,),
+                )
+                log.info("migration_ok", version=version)
+            except Exception:
+                if _optional_file(path):
+                    log.exception("migration_optional_failed", version=version)
+                    continue
+                log.exception("migration_failed", version=version)
+                raise
+
+
+def run(settings: Settings | None = None) -> None:
+    settings = settings or Settings()
+    configure_logging(json=settings.log_json, level=settings.log_level)
+    ensure_minio_bucket(settings)
+    apply_postgres(settings)
+    log.info("migrate_done")
+
+
+def main() -> None:
+    run()
+
+
+if __name__ == "__main__":
+    main()

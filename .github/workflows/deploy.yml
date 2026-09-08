@@ -1,0 +1,22 @@
+name: Deploy Coolify
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger Coolify
+        env:
+          WEBHOOK: ${{ secrets.COOLIFY_WEBHOOK }}
+          TOKEN: ${{ secrets.COOLIFY_TOKEN }}
+        run: |
+          if [ -z "$WEBHOOK" ]; then
+            echo "COOLIFY_WEBHOOK not set; skip (use Coolify GitHub App auto-deploy instead)"
+            exit 0
+          fi
+          curl --fail --show-error --silent \
+            --request GET "$WEBHOOK" \
+            --header "Authorization: Bearer ${TOKEN}"

@@ -30,6 +30,14 @@ class MinioSync:
             use_ssl=secure,
         )
 
+    def ensure_bucket(self) -> None:
+        try:
+            self._s3.head_bucket(Bucket=self.bucket)
+            log.info("minio_bucket_exists", bucket=self.bucket)
+        except Exception:
+            self._s3.create_bucket(Bucket=self.bucket)
+            log.info("minio_bucket_created", bucket=self.bucket)
+
     def sync_tree(self, lake: Path) -> int:
         n = 0
         for path in lake.rglob("*"):

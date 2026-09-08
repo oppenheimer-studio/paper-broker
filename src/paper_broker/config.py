@@ -26,3 +26,4 @@ class Settings(BaseSettings):
     minio_secret_key: str | None = None
     minio_bucket: str = "paper-broker"
     minio_secure: bool = False
+    database_url: str | None = None
