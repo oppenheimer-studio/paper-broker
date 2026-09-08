@@ -70,12 +70,32 @@ def apply_postgres(settings: Settings) -> None:
                     (version,),
                 )
                 log.info("migration_ok", version=version)
-            except Exception:
+            except Exception as exc:
                 if _optional_file(path):
                     log.exception("migration_optional_failed", version=version)
+                    _notify_lake(
+                        settings,
+                        level="warning",
+                        code="migrate.optional_failed",
+                        title=f"Optional migration {version} skipped",
+                        detail=str(exc),
+                    )
                     continue
                 log.exception("migration_failed", version=version)
                 raise
+
+
+def _notify_lake(settings: Settings, *, level: str, code: str, title: str, detail: str) -> None:
+    try:
+        from paper_broker.adapters.duckdb_warehouse import DuckDbWarehouse
+
+        wh = DuckDbWarehouse(settings.lake_path)
+        try:
+            wh.append_event(level=level, source="migrate", code=code, title=title, detail=detail)
+        finally:
+            wh.close()
+    except Exception:
+        log.exception("event_emit_failed", code=code)
 
 
 def run(settings: Settings | None = None) -> None:

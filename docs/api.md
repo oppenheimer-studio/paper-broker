@@ -11,6 +11,8 @@ Auth admin: header `Authorization: Bearer $ADMIN_KEY` en `POST /v1/admin/daily` 
 | GET | `/health` | proceso vivo |
 | GET | `/v1/clock` | `as_of`, `last_success`, `expected`, `pending_sessions` |
 | POST | `/v1/admin/daily` | catch-up desde último success |
+| GET | `/v1/notifications` | eventos de sistema (ingest, fallbacks, migrate) |
+| GET | `/v1/screener/meta` | campos, ops, presets |
 | POST | `/v1/screener` | filtros (lookbacks editables) |
 | GET | `/v1/securities` | búsqueda `q`, `limit` |
 | GET | `/v1/bars/{ticker}` | EOD `from`, `to` |

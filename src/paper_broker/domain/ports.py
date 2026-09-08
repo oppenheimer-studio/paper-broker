@@ -16,6 +16,7 @@ from paper_broker.domain.models import (
     ScreenerRow,
     Security,
     SecurityDraft,
+    SystemEvent,
 )
 
 
@@ -71,6 +72,19 @@ class Warehouse(Protocol):
     def finish_run(self, run_id: str, status: IngestStatus, notes: str, rows_upserted: int) -> None: ...
 
     def clock(self, expected: date | None, pending: list[date], ingest_running: bool) -> Clock: ...
+
+    def append_event(
+        self,
+        *,
+        level: str,
+        source: str,
+        code: str,
+        title: str,
+        detail: str = "",
+        data: dict[str, Any] | None = None,
+    ) -> SystemEvent: ...
+
+    def list_events(self, limit: int = 50) -> list[SystemEvent]: ...
 
     def query(self, req: QueryRequest) -> list[dict[str, Any]]: ...
 

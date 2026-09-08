@@ -27,3 +27,8 @@ class Settings(BaseSettings):
     minio_bucket: str = "paper-broker"
     minio_secure: bool = False
     database_url: str | None = None
+    cors_origins: str = (
+        "http://localhost:5173,http://127.0.0.1:5173,"
+        "http://paper-broker.oppenheimer.studio,https://paper-broker.oppenheimer.studio"
+    )
+    web_dist: Path = Path("./web/dist")

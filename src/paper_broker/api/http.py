@@ -3,19 +3,44 @@ from __future__ import annotations
 import threading
 from datetime import date
 
+from pathlib import Path
+
 from fastapi import Depends, FastAPI, Header, HTTPException, Query
-from fastapi.responses import JSONResponse
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse, JSONResponse
+from fastapi.staticfiles import StaticFiles
 
 from paper_broker.composition import Container
 from paper_broker.domain.models import QueryRequest, ScreenerRequest
+from paper_broker.domain.screener_spec import PRESETS, SNAPSHOT_FIELDS
 from paper_broker.logging import get_logger
 
 log = get_logger("http")
 
 
+def _parse_event_data(raw: str) -> dict:
+    import json
+
+    try:
+        data = json.loads(raw or "{}")
+        return data if isinstance(data, dict) else {"value": data}
+    except json.JSONDecodeError:
+        return {}
+
+
 def create_app(container: Container) -> FastAPI:
     app = FastAPI(title="paper-broker", version="0.1.0")
     settings = container.settings
+
+    origins = [o.strip() for o in settings.cors_origins.split(",") if o.strip()]
+    if origins:
+        app.add_middleware(
+            CORSMiddleware,
+            allow_origins=origins if origins != ["*"] else ["*"],
+            allow_credentials=origins != ["*"],
+            allow_methods=["*"],
+            allow_headers=["*"],
+        )
 
     def admin(authorization: str | None = Header(default=None)) -> None:
         if not authorization or authorization != f"Bearer {settings.admin_key}":
@@ -45,6 +70,30 @@ def create_app(container: Container) -> FastAPI:
             "running": container.daily.running,
             "report": container.daily.last_report,
             "clock": container.daily.clock().model_dump(),
+        }
+
+    @app.get("/v1/notifications")
+    def notifications(limit: int = Query(default=50, ge=1, le=200)):
+        events = container.warehouse.list_events(limit)
+        return {
+            "n": len(events),
+            "events": [
+                {
+                    **e.model_dump(mode="json"),
+                    "data": _parse_event_data(e.data),
+                }
+                for e in events
+            ],
+        }
+
+    @app.get("/v1/screener/meta")
+    def screener_meta():
+        return {
+            "fields": sorted(SNAPSHOT_FIELDS),
+            "ops": ["gt", "gte", "lt", "lte", "eq"],
+            "presets": {
+                name: [f.model_dump() for f in filters] for name, filters in PRESETS.items()
+            },
         }
 
     @app.post("/v1/screener")
@@ -77,4 +126,29 @@ def create_app(container: Container) -> FastAPI:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         return {"n": len(rows), "rows": rows}
 
+    _mount_web(app, settings.web_dist)
     return app
+
+
+def _mount_web(app: FastAPI, web_dist: Path) -> None:
+    dist = Path(web_dist)
+    index = dist / "index.html"
+    if not index.is_file():
+        log.info("web_dist_skip", path=str(dist))
+        return
+    assets = dist / "assets"
+    if assets.is_dir():
+        app.mount("/assets", StaticFiles(directory=assets), name="assets")
+
+    @app.get("/")
+    def spa_root():
+        return FileResponse(index)
+
+    @app.get("/{full_path:path}")
+    def spa_fallback(full_path: str):
+        if full_path.startswith("v1/") or full_path in {"health", "docs", "openapi.json", "redoc"}:
+            raise HTTPException(status_code=404, detail="Not Found")
+        target = dist / full_path
+        if target.is_file():
+            return FileResponse(target)
+        return FileResponse(index)

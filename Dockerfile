@@ -1,3 +1,10 @@
+FROM node:22-alpine AS web
+WORKDIR /web
+COPY web/package.json web/package-lock.json ./
+RUN npm ci
+COPY web/ ./
+RUN npm run build
+
 FROM python:3.12-slim
 
 WORKDIR /app
@@ -7,6 +14,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends curl && rm -rf 
 COPY pyproject.toml /app/pyproject.toml
 COPY db /app/db
 COPY src /app/src
+COPY --from=web /web/dist /app/web/dist
 
 RUN pip install --no-cache-dir \
     "duckdb>=1.2" "pandas>=2.2" "pyarrow>=17" "httpx>=0.27" \
@@ -16,6 +24,7 @@ RUN pip install --no-cache-dir \
 
 ENV PYTHONPATH=/app/src
 ENV LAKE_PATH=/data/lake
+ENV WEB_DIST=/app/web/dist
 
 VOLUME ["/data/lake"]
 

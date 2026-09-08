@@ -106,6 +106,17 @@ class Clock(BaseModel):
     ingest_running: bool = False
 
 
+class SystemEvent(BaseModel):
+    id: str
+    ts: datetime
+    level: str
+    source: str
+    code: str
+    title: str
+    detail: str = ""
+    data: str = "{}"
+
+
 class FilterOp(StrEnum):
     GT = "gt"
     GTE = "gte"

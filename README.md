@@ -1,6 +1,6 @@
 # Paper broker (backend)
 
-Warehouse US + screener + MCP. Sin frontend ni paper trading.
+Warehouse US + screener HTTP/MCP + UI del screener. Sin paper trading.
 
 Docs: [docs/README.md](docs/README.md)
 
@@ -12,6 +12,17 @@ cp .env.example .env
 pytest
 python -m paper_broker
 ```
+
+Frontend (producción: mismo HTTP que la API):
+
+```bash
+cd web && npm install && npm run build
+python -m paper_broker   # sirve web/dist en :8080
+# o: cd web && npm run dev   # :5173
+```
+
+- HTTP + UI: `http://127.0.0.1:8080`
+- MCP: `http://127.0.0.1:8081/mcp`
 
 - HTTP: `http://127.0.0.1:8080`
 - MCP: `http://127.0.0.1:8081/mcp`

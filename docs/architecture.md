@@ -44,4 +44,4 @@ Un solo proceso: API + MCP. El cron llama `POST /v1/admin/daily`.
 
 ## Lo que esta etapa no tiene
 
-Frontend, auth de usuarios, N cuentas paper, settle de órdenes, news, 10-Q masivo, FMP.
+Auth de usuarios, N cuentas paper, settle de órdenes, news, 10-Q masivo, FMP. El frontend arranca como screener (`web/`).

@@ -2,7 +2,7 @@
 
 Producto nuevo. No es un refactor de `packages/broker` ni de `data/market.db`.
 
-Esta etapa: warehouse, API de consulta, MCP, job diario catch-up/idempotente, y screener. **Sin frontend y sin paper trading / multicuentas.**
+Esta etapa: warehouse, API de consulta, MCP, job diario catch-up/idempotente, screener, y **frontend del screener** (`web/`). Sin paper trading / multicuentas.
 
 | Doc | Qué cubre |
 |---|---|
@@ -11,6 +11,7 @@ Esta etapa: warehouse, API de consulta, MCP, job diario catch-up/idempotente, y 
 | [daily-update.md](daily-update.md) | Reloj, catch-up, idempotencia, orden por market cap |
 | [api.md](api.md) | HTTP + MCP |
 | [screener.md](screener.md) | Filtros configurables y el caso relvol 5m |
+| [frontend.md](frontend.md) | App Vite del screener (tipo TradingView) |
 | [ops.md](ops.md) | Coolify, cron, MinIO, primer deploy |
 
 Host: Coolify. Deploy: push a `main` ([ops.md](ops.md)). Migraciones: [db/README.md](../db/README.md).

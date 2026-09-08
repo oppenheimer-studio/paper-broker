@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import json
 import uuid
 from datetime import date, datetime, timezone
 from pathlib import Path
+from threading import Lock
 from typing import Any
 
 import duckdb
@@ -17,6 +19,7 @@ from paper_broker.domain.models import (
     IngestRun,
     IngestStatus,
     MinuteOpenBar,
+    SystemEvent,
     QueryRequest,
     ScreenerRequest,
     ScreenerRow,
@@ -71,6 +74,7 @@ ALLOWED_TABLES = {
     },
     "daily_market": {"date", "vix", "us10y", "us2y", "tbill", "dxy", "oil", "gold"},
     "ingest_runs": {"run_id", "as_of", "status", "started_at", "finished_at", "notes", "rows_upserted"},
+    "system_events": {"id", "ts", "level", "source", "code", "title", "detail", "data"},
 }
 
 ALLOWED_AGGS = {"avg", "sum", "min", "max", "count"}
@@ -86,6 +90,7 @@ class DuckDbWarehouse:
         self.lake = Path(lake)
         self.lake.mkdir(parents=True, exist_ok=True)
         self._con = duckdb.connect(str(self.lake / "catalog.duckdb"))
+        self._events_lock = Lock()
 
     def close(self) -> None:
         self._con.close()
@@ -404,6 +409,70 @@ class DuckDbWarehouse:
             ingest_running=ingest_running,
         )
 
+    def _events_df(self) -> pd.DataFrame:
+        return self._read_parquet("meta/system_events.parquet", list(ALLOWED_TABLES["system_events"]))
+
+    def _save_events(self, df: pd.DataFrame) -> None:
+        path = self._path("meta")
+        path.mkdir(parents=True, exist_ok=True)
+        df.to_parquet(path / "system_events.parquet", index=False)
+
+    def append_event(
+        self,
+        *,
+        level: str,
+        source: str,
+        code: str,
+        title: str,
+        detail: str = "",
+        data: dict[str, Any] | None = None,
+    ) -> SystemEvent:
+        event = SystemEvent(
+            id=str(uuid.uuid4()),
+            ts=datetime.now(timezone.utc),
+            level=level,
+            source=source,
+            code=code,
+            title=title,
+            detail=detail or "",
+            data=json.dumps(data or {}, default=str),
+        )
+        with self._events_lock:
+            df = self._events_df()
+            row = pd.DataFrame([event.model_dump()])
+            df = pd.concat([df, row], ignore_index=True) if not df.empty else row
+            if len(df) > 2000:
+                df = df.tail(2000).reset_index(drop=True)
+            self._save_events(df)
+        log.info("system_event", level=level, code=code, title=title)
+        return event
+
+    def list_events(self, limit: int = 50) -> list[SystemEvent]:
+        df = self._events_df()
+        if df.empty:
+            return []
+        df = df.copy()
+        df["ts"] = pd.to_datetime(df["ts"], utc=True)
+        df = df.sort_values("ts", ascending=False).head(max(1, limit))
+        out: list[SystemEvent] = []
+        for r in df.to_dict(orient="records"):
+            ts = r["ts"]
+            if hasattr(ts, "to_pydatetime"):
+                ts = ts.to_pydatetime()
+            out.append(
+                SystemEvent(
+                    id=str(r["id"]),
+                    ts=ts,
+                    level=str(r["level"]),
+                    source=str(r["source"]),
+                    code=str(r["code"]),
+                    title=str(r["title"]),
+                    detail=str(r.get("detail") or ""),
+                    data=str(r.get("data") or "{}"),
+                )
+            )
+        return out
+
     def query(self, req: QueryRequest) -> list[dict[str, Any]]:
         if req.table not in ALLOWED_TABLES:
             raise ValueError(f"table not allowed: {req.table}")
@@ -476,6 +545,11 @@ class DuckDbWarehouse:
             p = self._path("meta/ingest_runs.parquet")
             if not p.exists():
                 return "(SELECT NULL AS run_id WHERE 1=0)"
+            return f"read_parquet('{p.as_posix()}')"
+        if table == "system_events":
+            p = self._path("meta/system_events.parquet")
+            if not p.exists():
+                return "(SELECT NULL AS id WHERE 1=0)"
             return f"read_parquet('{p.as_posix()}')"
         root = self._path(table)
         files = list(root.rglob("*.parquet"))
