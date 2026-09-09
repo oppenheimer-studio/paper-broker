@@ -41,11 +41,23 @@ def apply_postgres(settings: Settings) -> None:
     if not files:
         log.warning("no_migration_files", path=str(MIGRATIONS))
         return
-    with psycopg.connect(
-        settings.database_url,
-        autocommit=True,
-        cursor_factory=psycopg.ClientCursor,
-    ) as con:
+    try:
+        con = psycopg.connect(
+            settings.database_url,
+            autocommit=True,
+            cursor_factory=psycopg.ClientCursor,
+        )
+    except psycopg.Error as exc:
+        log.exception("postgres_connect_failed")
+        _notify_lake(
+            settings,
+            level="warning",
+            code="migrate.postgres_unavailable",
+            title="Postgres unavailable; skipped SQL migrations",
+            detail=str(exc),
+        )
+        return
+    with con:
         applied: set[str] = set()
         try:
             rows = con.execute("SELECT version FROM paper_broker.schema_migrations").fetchall()
