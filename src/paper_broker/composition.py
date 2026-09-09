@@ -29,7 +29,7 @@ def build(settings: Settings | None = None) -> Container:
     warehouse = DuckDbWarehouse(settings.lake_path)
     yahoo = YahooFeed(settings.yahoo_user_agent, settings.http_timeout_s)
     universe = NasdaqUniverse(timeout=settings.http_timeout_s, warehouse=warehouse)
-    calendar = QqqCalendar(yahoo)
+    calendar = QqqCalendar(yahoo, warehouse=warehouse)
     minio = None
     if settings.minio_endpoint and settings.minio_access_key and settings.minio_secret_key:
         minio = MinioSync(

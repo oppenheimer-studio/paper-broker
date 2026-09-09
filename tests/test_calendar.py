@@ -65,3 +65,29 @@ def test_saturday_one_am_asuncion_is_friday():
 def test_no_bars_returns_none():
     now = datetime(2026, 9, 9, 1, 0, tzinfo=ASUNCION)
     assert _cal([]).expected_as_of(now) is None
+
+
+class _BoomFeed:
+    def fetch_eod(self, ticker, start, end):
+        raise RuntimeError("yahoo 429")
+
+
+class _Wh:
+    def bars(self, ticker, start, end, limit):
+        return [
+            {
+                "date": date(2026, 9, 8),
+                "open": 1,
+                "high": 1,
+                "low": 1,
+                "close": 1,
+                "adj_close": 1,
+                "volume": 1,
+            }
+        ]
+
+
+def test_warehouse_fallback_when_yahoo_fails():
+    cal = QqqCalendar(_BoomFeed(), warehouse=_Wh())
+    now = datetime(2026, 9, 9, 1, 0, tzinfo=ASUNCION)
+    assert cal.expected_as_of(now) == date(2026, 9, 8)
