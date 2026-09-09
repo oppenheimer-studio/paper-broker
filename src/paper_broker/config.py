@@ -17,6 +17,14 @@ class Settings(BaseSettings):
     log_json: bool = False
     ingest_max_tickers: int = 0
     ingest_concurrency: int = 6
+    yahoo_max_requests_per_hour: int = 2500
+    defeatbeta_enabled: bool = True
+    defeatbeta_base_url: str = (
+        "https://huggingface.co/datasets/defeatbeta/yahoo-finance-data/resolve/main"
+    )
+    eod_ready_attempts: int = 6
+    eod_ready_wait_s: float = 1800
+    eod_give_up_hour: int = 9
     seed_sessions: int = 14
     open_window_minutes: int = 5
     http_timeout_s: float = 30

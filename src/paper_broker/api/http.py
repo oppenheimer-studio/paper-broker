@@ -10,6 +10,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
+from paper_broker.application.daily_update import PHASES
 from paper_broker.composition import Container
 from paper_broker.domain.models import QueryRequest, ScreenerRequest
 from paper_broker.domain.screener_spec import PRESETS, SNAPSHOT_FIELDS
@@ -55,22 +56,36 @@ def create_app(container: Container) -> FastAPI:
         return container.daily.clock().model_dump()
 
     @app.post("/v1/admin/daily")
-    def daily(wait: bool = False, _: None = Depends(admin)):
+    def daily(
+        wait: bool = False,
+        phase: str = Query(default="all"),
+        _: None = Depends(admin),
+    ):
+        phase = (phase or "all").lower()
+        if phase not in PHASES:
+            raise HTTPException(status_code=400, detail=f"phase must be one of {sorted(PHASES)}")
         if wait:
-            return container.daily.run()
-        if container.daily.running:
-            return JSONResponse({"status": "already_running", "report": container.daily.last_report})
-        threading.Thread(target=container.daily.run, name="daily-update", daemon=True).start()
-        log.info("daily_started_background")
-        return JSONResponse({"status": "started"}, status_code=202)
+            return container.daily.run(phase)
+        if not container.daily.can_start(phase):
+            return JSONResponse(
+                {
+                    "status": "already_running",
+                    "phase": phase,
+                    "report": container.daily.last_report,
+                }
+            )
+        threading.Thread(
+            target=container.daily.run,
+            kwargs={"phase": phase},
+            name=f"daily-{phase}",
+            daemon=True,
+        ).start()
+        log.info("daily_started_background", phase=phase)
+        return JSONResponse({"status": "started", "phase": phase}, status_code=202)
 
     @app.get("/v1/admin/daily")
     def daily_status(_: None = Depends(admin)):
-        return {
-            "running": container.daily.running,
-            "report": container.daily.last_report,
-            "clock": container.daily.clock().model_dump(),
-        }
+        return container.daily.status()
 
     @app.get("/v1/notifications")
     def notifications(limit: int = Query(default=50, ge=1, le=200)):

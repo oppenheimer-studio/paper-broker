@@ -29,7 +29,7 @@ python -m paper_broker   # sirve web/dist en :8080
 
 ```bash
 curl -s http://127.0.0.1:8080/health
-curl -s -X POST http://127.0.0.1:8080/v1/admin/daily?wait=true \
+curl -s -X POST http://127.0.0.1:8080/v1/admin/daily?wait=true\&phase=eod \
   -H "Authorization: Bearer changeme"
 curl -s -X POST http://127.0.0.1:8080/v1/screener \
   -H "Content-Type: application/json" \

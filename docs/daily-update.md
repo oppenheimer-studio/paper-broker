@@ -2,12 +2,15 @@
 
 Un job. Reloj = sesiones en las que **QQQ** tiene barra (`interval=1d`). No se usa `GSPC`/`^GSPC` como gate.
 
-Corrida: cron nocturno o `POST /v1/admin/daily` (y MCP `run_daily_update`).
+Corrida: dos cron, o `POST /v1/admin/daily?phase=minutes|eod|all` (y MCP `run_daily_update`).
+
+- **02:00 America/Asuncion** — `phase=minutes`: Yahoo 1m (first 5m RTH), ~2500 requests/hora. No marca `success` en el reloj.
+- **06:00 America/Asuncion** — `phase=eod`: EOD + splits/divs desde Defeatbeta (Hugging Face). Si el parquet del día anterior no está, espera 30 min y reintenta, 6 veces. Si a las 09:00 Asuncion sigue vacío, corta y emite `daily.eod_not_ready` (no tumba Yahoo el universo). Huecos de ticker → Yahoo. Después recalcula derived y marca `success`.
 
 ## Catch-up
 
 Sea `last_ok` el máximo `as_of` con `status=success` en `ingest_runs`.
-Sea `expected` la última sesión de QQQ **estrictamente anterior** a la fecha de hoy en America/New_York. Un cron a la 1:00 en Paraguay trae el cash session de ayer US; nunca “hoy” porque ese día todavía no terminó.
+Sea `expected` la última sesión de QQQ **estrictamente anterior** a la fecha de hoy en America/New_York. A las 02:00 en Paraguay ya cerró el cash session de ayer US; el EOD espera a que Defeatbeta publique ese día (suele ser ~05:00 UTC).
 
 Se procesan **todas** las sesiones `(last_ok, expected]` en orden. Si ayer falló y hoy corrés el endpoint, corre ayer y hoy.
 
@@ -33,9 +36,9 @@ Dentro de cada sesión, los fetches externos se encolan **market cap desc** (úl
 
 1. `calendar` — confirmar que `session` está en QQQ.
 2. `universe` — Nasdaq listed + otherlisted, filtro US stock.
-3. `eod` — Yahoo 1d, faltantes primero, orden mcap. Splits/divs del mismo payload → `corporate_actions`.
-4. `minute_open` — Yahoo 1m, primeros 5 min RTH, mismo orden (query1 → query2, retry de vacíos/fallos).
-5. `derived` — ATR, avg vol, relvol at, price. Sin EOD de QQQ la sesión queda `error`.
+3. `eod` — Defeatbeta `stock_prices` + splits/divs (bulk). Tickers faltantes: Yahoo 1d. No corre si Defeatbeta no tiene el `as_of` (reintento 6×30 min, corte 09:00 Asuncion).
+4. `minute_open` — Yahoo 1m, primeros 5 min RTH, mismo orden, **tope ~2500 GET/hora** (query1 → query2, retry de vacíos/fallos). Cron aparte a las 02:00.
+5. `derived` — ATR, avg vol, relvol at, price. Solo en `phase=eod`/`all`. Sin EOD de QQQ la sesión queda `error`.
 6. `index` — commit `ingest_runs` success.
 
 Macro FRED (`daily_market`) queda cableado como paso opcional; el screener de esta etapa no lo necesita.

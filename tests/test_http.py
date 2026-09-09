@@ -6,7 +6,9 @@ from paper_broker.config import Settings
 def test_screener_meta_lists_open_relvol(tmp_path):
     from fastapi.testclient import TestClient
 
-    app = create_app(build(Settings(lake_path=tmp_path, cors_origins="http://localhost:5173")))
+    app = create_app(
+        build(Settings(lake_path=tmp_path, cors_origins="http://localhost:5173", defeatbeta_enabled=False))
+    )
     client = TestClient(app)
     r = client.get("/v1/screener/meta")
     assert r.status_code == 200
@@ -24,7 +26,14 @@ def test_root_is_404_without_web_dist(tmp_path, monkeypatch):
     monkeypatch.setattr(YahooFeed, "fetch_eod", lambda self, ticker, start, end: [])
     monkeypatch.setattr(YahooFeed, "fetch_session", lambda self, ticker, start, end: ([], []))
     app = create_app(
-        build(Settings(lake_path=tmp_path, cors_origins="http://localhost:5173", web_dist=tmp_path / "nope"))
+        build(
+            Settings(
+                lake_path=tmp_path,
+                cors_origins="http://localhost:5173",
+                web_dist=tmp_path / "nope",
+                defeatbeta_enabled=False,
+            )
+        )
     )
     client = TestClient(app)
     assert client.get("/").status_code == 404
@@ -34,7 +43,9 @@ def test_root_is_404_without_web_dist(tmp_path, monkeypatch):
 def test_mcp_allows_coolify_host(tmp_path):
     from paper_broker.api.mcp_app import build_mcp
 
-    mcp = build_mcp(build(Settings(lake_path=tmp_path, cors_origins="http://localhost:5173")))
+    mcp = build_mcp(
+        build(Settings(lake_path=tmp_path, cors_origins="http://localhost:5173", defeatbeta_enabled=False))
+    )
     hosts = mcp.settings.transport_security.allowed_hosts
     assert "paper-broker-mcp.oppenheimer.studio" in hosts
 
@@ -42,7 +53,9 @@ def test_mcp_allows_coolify_host(tmp_path):
 def test_notifications_endpoint(tmp_path):
     from fastapi.testclient import TestClient
 
-    container = build(Settings(lake_path=tmp_path, cors_origins="http://localhost:5173"))
+    container = build(
+        Settings(lake_path=tmp_path, cors_origins="http://localhost:5173", defeatbeta_enabled=False)
+    )
     container.warehouse.append_event(
         level="warning",
         source="daily",

@@ -11,6 +11,7 @@ from paper_broker.domain.models import (
     IngestStatus,
     MinuteOpenBar,
     QueryRequest,
+    RawCorporateAction,
     RawDailyBar,
     RawMinuteOpen,
     ScreenerRequest,
@@ -35,6 +36,14 @@ class MinuteFeed(Protocol):
     def fetch_open_windows(
         self, ticker: str, start: date, end: date, window_minutes: int
     ) -> list[RawMinuteOpen]: ...
+
+
+class BulkEodFeed(Protocol):
+    def sessions_ready(self, dates: list[date]) -> bool: ...
+
+    def fetch_range(
+        self, start: date, end: date
+    ) -> tuple[list[RawDailyBar], list[RawCorporateAction]]: ...
 
 
 class MarketCalendar(Protocol):

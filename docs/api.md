@@ -4,13 +4,15 @@ Mismos casos de uso. HTTP para scripts/Coolify; MCP para agentes.
 
 Auth admin: header `Authorization: Bearer $ADMIN_KEY` en `POST /v1/admin/daily` y tool `run_daily_update`. Lecturas de mercado sin key en etapa 1 (red interna).
 
+`POST /v1/admin/daily?phase=minutes|eod|all` (default `all`). Minutes y EOD pueden correr en paralelo: el EOD espera a que terminen los writes de minutos antes de tocar DuckDB.
+
 ## HTTP
 
 | Método | Path | Qué |
 |---|---|---|
 | GET | `/health` | proceso vivo |
 | GET | `/v1/clock` | `as_of`, `last_success`, `expected`, `pending_sessions` |
-| POST | `/v1/admin/daily` | catch-up desde último success |
+| POST | `/v1/admin/daily` | catch-up; `phase=minutes|eod|all` |
 | GET | `/v1/notifications` | eventos de sistema (ingest, fallbacks, migrate) |
 | GET | `/v1/screener/meta` | campos, ops, presets |
 | POST | `/v1/screener` | filtros (lookbacks editables) |

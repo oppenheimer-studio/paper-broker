@@ -6,12 +6,14 @@ from zoneinfo import ZoneInfo
 
 import httpx
 
+from paper_broker.adapters.rate_limit import HourlyRateLimiter
 from paper_broker.domain.models import RawCorporateAction, RawDailyBar, RawMinuteOpen
 from paper_broker.logging import get_logger
 
 log = get_logger("yahoo")
 ET = ZoneInfo("America/New_York")
 CHART_HOSTS = ("query1.finance.yahoo.com", "query2.finance.yahoo.com")
+DEFAULT_MAX_REQUESTS_PER_HOUR = 2500
 
 
 class YahooError(Exception):
@@ -22,7 +24,13 @@ class YahooError(Exception):
 
 
 class YahooFeed:
-    def __init__(self, user_agent: str, timeout: float) -> None:
+    def __init__(
+        self,
+        user_agent: str,
+        timeout: float,
+        max_requests_per_hour: int = DEFAULT_MAX_REQUESTS_PER_HOUR,
+        limiter: HourlyRateLimiter | None = None,
+    ) -> None:
         self._client = httpx.Client(
             timeout=timeout,
             headers={
@@ -32,6 +40,7 @@ class YahooFeed:
             },
             follow_redirects=True,
         )
+        self._limiter = limiter or HourlyRateLimiter(max_requests_per_hour)
 
     def close(self) -> None:
         self._client.close()
@@ -126,6 +135,9 @@ class YahooFeed:
     def _get_json(self, url: str, *, ticker: str) -> dict:
         last_exc: Exception | None = None
         for attempt in range(4):
+            waited = self._limiter.acquire()
+            if waited:
+                log.info("yahoo_rate_pace", ticker=ticker, waited_s=round(waited, 1))
             try:
                 res = self._client.get(url)
                 if res.status_code == 429:

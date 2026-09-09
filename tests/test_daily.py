@@ -199,3 +199,190 @@ def test_daily_continues_after_session_error(tmp_path):
     assert "error" in statuses
     assert "success" in statuses
     assert report["status"] == "partial"
+
+
+def test_minutes_phase_does_not_mark_success(tmp_path):
+    from paper_broker.domain.models import RawMinuteOpen
+
+    class MinuteFeed(Feed):
+        def fetch_open_windows(self, ticker, start, end, window_minutes):
+            day = start
+            out = []
+            while day <= end:
+                out.append(
+                    RawMinuteOpen(
+                        ticker=ticker,
+                        date=day,
+                        window_minutes=window_minutes,
+                        open=10,
+                        high=11,
+                        low=9,
+                        close=10.2,
+                        volume=50_000,
+                    )
+                )
+                day = date.fromordinal(day.toordinal() + 1)
+            return out
+
+    wh, svc = _svc(tmp_path, SeedUniverse())
+    svc._minutes = MinuteFeed()
+    report = svc.run("minutes")
+    assert report["phase"] == "minutes"
+    assert report["minute_open_upserts"] > 0
+    assert report["sessions"] == []
+    assert wh.last_success_as_of() is None
+
+
+def test_eod_gives_up_when_defeatbeta_not_ready(tmp_path):
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+
+    class NeverReady:
+        def sessions_ready(self, dates):
+            return False
+
+        def fetch_range(self, start, end):
+            raise AssertionError("must not fetch")
+
+    wh = DuckDbWarehouse(tmp_path)
+    svc = DailyUpdateService(
+        wh,
+        SeedUniverse(),
+        Feed(),
+        Feed(),
+        Cal(),
+        seed_sessions=1,
+        max_tickers=3,
+        concurrency=1,
+        open_window_minutes=5,
+        eod_bulk=NeverReady(),
+        eod_ready_attempts=6,
+        eod_ready_wait_s=0,
+        eod_give_up_hour=9,
+        now_fn=lambda: datetime(2026, 9, 9, 12, 5, tzinfo=ZoneInfo("UTC")),
+    )
+    report = svc.run("eod")
+    assert report["status"] == "error"
+    assert report["error"] == "defeatbeta_not_ready"
+    assert wh.last_success_as_of() is None
+    codes = {e.code for e in wh.list_events()}
+    assert "daily.eod_not_ready" in codes
+
+
+def test_eod_retries_until_defeatbeta_ready(tmp_path):
+    from paper_broker.domain.models import RawCorporateAction, RawDailyBar
+
+    class LaterReady:
+        def __init__(self):
+            self.checks = 0
+
+        def sessions_ready(self, dates):
+            self.checks += 1
+            return self.checks >= 3
+
+        def fetch_range(self, start, end):
+            bars = []
+            day = start
+            while day <= end:
+                for ticker in ("QQQ", "SPY", "AAPL", "MSFT", "NVDA"):
+                    bars.append(
+                        RawDailyBar(
+                            ticker=ticker,
+                            date=day,
+                            open=10,
+                            high=11,
+                            low=9,
+                            close=10.5,
+                            adj_close=10.5,
+                            volume=1_000_000,
+                            source="defeatbeta",
+                        )
+                    )
+                day = date.fromordinal(day.toordinal() + 1)
+            return bars, [
+                RawCorporateAction(
+                    ticker="AAPL",
+                    date=start,
+                    action="dividend",
+                    value=0.22,
+                    source="defeatbeta",
+                )
+            ]
+
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+
+    bulk = LaterReady()
+    sleeps = []
+    wh = DuckDbWarehouse(tmp_path)
+    svc = DailyUpdateService(
+        wh,
+        SeedUniverse(),
+        Feed(),
+        Feed(),
+        Cal(),
+        seed_sessions=1,
+        max_tickers=0,
+        concurrency=1,
+        open_window_minutes=5,
+        eod_bulk=bulk,
+        eod_ready_attempts=6,
+        eod_ready_wait_s=0.01,
+        sleeper=lambda s: sleeps.append(s),
+        now_fn=lambda: datetime(2026, 9, 9, 9, 0, tzinfo=ZoneInfo("UTC")),
+    )
+    report = svc.run("eod")
+    assert bulk.checks == 3
+    assert sleeps == [0.01, 0.01]
+    assert report["status"] in {"ok", "partial"}
+    assert report["eod_source"] == "defeatbeta"
+    assert report["corporate_actions"] >= 1
+    assert wh.last_success_as_of() == date(2026, 9, 4)
+
+
+def test_eod_yahoo_fallback_for_missing_ticker(tmp_path):
+    from paper_broker.domain.models import RawDailyBar
+
+    class PartialBulk:
+        def sessions_ready(self, dates):
+            return True
+
+        def fetch_range(self, start, end):
+            bars = []
+            day = start
+            while day <= end:
+                bars.append(
+                    RawDailyBar(
+                        ticker="QQQ",
+                        date=day,
+                        open=1,
+                        high=2,
+                        low=1,
+                        close=1.5,
+                        adj_close=1.5,
+                        volume=10,
+                        source="defeatbeta",
+                    )
+                )
+                day = date.fromordinal(day.toordinal() + 1)
+            return bars, []
+
+    wh = DuckDbWarehouse(tmp_path)
+    svc = DailyUpdateService(
+        wh,
+        SeedUniverse(),
+        Feed(),
+        Feed(),
+        Cal(),
+        seed_sessions=1,
+        max_tickers=0,
+        concurrency=1,
+        open_window_minutes=5,
+        eod_bulk=PartialBulk(),
+    )
+    report = svc.run("eod")
+    assert report["eod_source"] == "mixed"
+    assert report["status"] in {"ok", "partial"}
+    assert report["eod_upserts"] >= 5
+    assert report["eod_ok"] == 5
+

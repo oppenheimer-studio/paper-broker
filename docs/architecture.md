@@ -14,9 +14,9 @@ Hexágono chico: el dominio no importa DuckDB, Yahoo ni FastAPI. Tres casos de u
                                       │ ports
            ┌──────────────┬───────────┼───────────┬──────────────┐
            ▼              ▼           ▼           ▼              ▼
-      UniverseFeed   PriceFeed   MinuteFeed   Warehouse      Calendar
-      (Nasdaq)       (Yahoo)     (Yahoo 1m)   (DuckDB+     (QQQ dates)
-                                              parquet)
+      UniverseFeed   PriceFeed   MinuteFeed   BulkEodFeed    Warehouse      Calendar
+      (Nasdaq)       (Yahoo     (Yahoo 1m    (Defeatbeta    (DuckDB+     (QQQ dates)
+                      fallback)   ~2500/h)    parquet HF)    parquet)
 ```
 
 ## Qué es un cluster, no dos productos
@@ -36,7 +36,7 @@ Etapa 1 no usa Postgres para el tape. `ingest_runs` vive en el lago (`meta/inges
 | adapters | `src/paper_broker/adapters` | Yahoo, Nasdaq, DuckDB, HTTP, MCP. |
 | composition | `src/paper_broker/main.py` | Cableado + config. |
 
-Un solo proceso: API + MCP. El cron llama `POST /v1/admin/daily`.
+Un solo proceso: API + MCP. Cron minutes `POST /v1/admin/daily?phase=minutes`; cron EOD `phase=eod`.
 
 ## Logging
 

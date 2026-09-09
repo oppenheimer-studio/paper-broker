@@ -72,15 +72,21 @@ def build_mcp(container: Container) -> FastMCP:
         return json.dumps({"n": len(rows), "rows": rows}, default=str)
 
     @mcp.tool()
-    def run_daily_update(wait: bool = False) -> str:
-        """Catch-up ingest from last successful session. Admin. Idempotent."""
+    def run_daily_update(wait: bool = False, phase: str = "all") -> str:
+        """Catch-up ingest. phase=all|eod|minutes. Admin. Idempotent."""
+        phase = (phase or "all").lower()
         if wait:
-            return json.dumps(container.daily.run(), default=str)
+            return json.dumps(container.daily.run(phase), default=str)
         import threading
 
-        if container.daily.running:
-            return json.dumps({"status": "already_running"})
-        threading.Thread(target=container.daily.run, name="daily-update", daemon=True).start()
-        return json.dumps({"status": "started"})
+        if not container.daily.can_start(phase):
+            return json.dumps({"status": "already_running", "phase": phase})
+        threading.Thread(
+            target=container.daily.run,
+            kwargs={"phase": phase},
+            name=f"daily-{phase}",
+            daemon=True,
+        ).start()
+        return json.dumps({"status": "started", "phase": phase})
 
     return mcp
