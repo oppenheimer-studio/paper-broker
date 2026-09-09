@@ -5,6 +5,7 @@ from typing import Any, Protocol
 
 from paper_broker.domain.models import (
     Clock,
+    CorporateAction,
     DailyBar,
     IngestRun,
     IngestStatus,
@@ -60,6 +61,8 @@ class Warehouse(Protocol):
     def write_daily_bars(self, bars: list[DailyBar]) -> int: ...
 
     def write_minute_open(self, bars: list[MinuteOpenBar]) -> int: ...
+
+    def write_corporate_actions(self, rows: list[CorporateAction]) -> int: ...
 
     def rewrite_derived(
         self, as_of: date, avg_n: int, atr_n: int, relvol_n: int, window_minutes: int

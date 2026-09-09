@@ -20,7 +20,10 @@ class Settings(BaseSettings):
     seed_sessions: int = 14
     open_window_minutes: int = 5
     http_timeout_s: float = 30
-    yahoo_user_agent: str = "paper-broker/0.1"
+    yahoo_user_agent: str = (
+        "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
+        "(KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36"
+    )
     minio_endpoint: str | None = None
     minio_access_key: str | None = None
     minio_secret_key: str | None = None

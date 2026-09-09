@@ -14,6 +14,7 @@ from paper_broker.domain.indicators import rel_vol_at, sma, wilder_atr
 from paper_broker.domain.models import (
     AssetType,
     Clock,
+    CorporateAction,
     DailyBar,
     FilterOp,
     IngestRun,
@@ -73,6 +74,15 @@ ALLOWED_TABLES = {
         "window_minutes",
     },
     "daily_market": {"date", "vix", "us10y", "us2y", "tbill", "dxy", "oil", "gold"},
+    "corporate_actions": {
+        "security_id",
+        "date",
+        "action",
+        "value",
+        "numerator",
+        "denominator",
+        "source",
+    },
     "ingest_runs": {"run_id", "as_of", "status", "started_at", "finished_at", "notes", "rows_upserted"},
     "system_events": {"id", "ts", "level", "source", "code", "title", "detail", "data"},
 }
@@ -271,6 +281,14 @@ class DuckDbWarehouse:
         df = pd.DataFrame([b.model_dump() for b in bars])
         n = self._write_hive_upsert("minute_open", df, ["security_id", "date", "window_minutes"])
         log.info("minute_open_written", n=n)
+        return n
+
+    def write_corporate_actions(self, rows: list[CorporateAction]) -> int:
+        if not rows:
+            return 0
+        df = pd.DataFrame([r.model_dump() for r in rows])
+        n = self._write_hive_upsert("corporate_actions", df, ["security_id", "date", "action"])
+        log.info("corporate_actions_written", n=n)
         return n
 
     def rewrite_derived(

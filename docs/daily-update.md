@@ -7,7 +7,7 @@ Corrida: cron nocturno o `POST /v1/admin/daily` (y MCP `run_daily_update`).
 ## Catch-up
 
 Sea `last_ok` el máximo `as_of` con `status=success` en `ingest_runs`.
-Sea `expected` el último día de sesión de QQQ ≤ ahora ET.
+Sea `expected` la última sesión de QQQ **estrictamente anterior** a la fecha de hoy en America/New_York. Un cron a la 1:00 en Paraguay trae el cash session de ayer US; nunca “hoy” porque ese día todavía no terminó.
 
 Se procesan **todas** las sesiones `(last_ok, expected]` en orden. Si ayer falló y hoy corrés el endpoint, corre ayer y hoy.
 
@@ -33,9 +33,9 @@ Dentro de cada sesión, los fetches externos se encolan **market cap desc** (úl
 
 1. `calendar` — confirmar que `session` está en QQQ.
 2. `universe` — Nasdaq listed + otherlisted, filtro US stock.
-3. `eod` — Yahoo 1d, faltantes primero, orden mcap.
-4. `minute_open` — Yahoo 1m, primeros 5 min RTH, mismo orden.
-5. `derived` — ATR, avg vol, relvol at, price.
+3. `eod` — Yahoo 1d, faltantes primero, orden mcap. Splits/divs del mismo payload → `corporate_actions`.
+4. `minute_open` — Yahoo 1m, primeros 5 min RTH, mismo orden (query1 → query2, retry de vacíos/fallos).
+5. `derived` — ATR, avg vol, relvol at, price. Sin EOD de QQQ la sesión queda `error`.
 6. `index` — commit `ingest_runs` success.
 
 Macro FRED (`daily_market`) queda cableado como paso opcional; el screener de esta etapa no lo necesita.

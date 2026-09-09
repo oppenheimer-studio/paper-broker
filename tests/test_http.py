@@ -16,9 +16,13 @@ def test_screener_meta_lists_open_relvol(tmp_path):
     assert "gt" in body["ops"]
 
 
-def test_root_is_404_without_web_dist(tmp_path):
+def test_root_is_404_without_web_dist(tmp_path, monkeypatch):
     from fastapi.testclient import TestClient
 
+    from paper_broker.adapters.yahoo import YahooFeed
+
+    monkeypatch.setattr(YahooFeed, "fetch_eod", lambda self, ticker, start, end: [])
+    monkeypatch.setattr(YahooFeed, "fetch_session", lambda self, ticker, start, end: ([], []))
     app = create_app(
         build(Settings(lake_path=tmp_path, cors_origins="http://localhost:5173", web_dist=tmp_path / "nope"))
     )

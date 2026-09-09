@@ -88,6 +88,26 @@ class RawMinuteOpen(BaseModel):
     source: str = "yahoo"
 
 
+class RawCorporateAction(BaseModel):
+    ticker: str
+    date: date
+    action: str
+    value: float | None = None
+    numerator: float | None = None
+    denominator: float | None = None
+    source: str = "yahoo"
+
+
+class CorporateAction(BaseModel):
+    security_id: int
+    date: date
+    action: str
+    value: float | None = None
+    numerator: float | None = None
+    denominator: float | None = None
+    source: str = "yahoo"
+
+
 class IngestRun(BaseModel):
     run_id: str
     as_of: date

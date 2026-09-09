@@ -92,6 +92,69 @@ def test_daily_seed_fallback_emits_and_finishes(tmp_path):
     assert wh.last_success_as_of() == date(2026, 9, 4)
 
 
+def test_max_tickers_zero_ingests_full_universe(tmp_path):
+    drafts = seed_drafts()
+    wh = DuckDbWarehouse(tmp_path)
+
+    class Uni:
+        def fetch_universe(self):
+            return UniverseSnapshot(drafts=drafts, source="nasdaq", warnings=[])
+
+        def fetch_us_stocks(self):
+            return drafts
+
+    feed = Feed()
+    svc = DailyUpdateService(
+        wh,
+        Uni(),
+        feed,
+        feed,
+        Cal(),
+        seed_sessions=1,
+        max_tickers=0,
+        concurrency=1,
+        open_window_minutes=5,
+    )
+    report = svc.run()
+    assert report["universe_n"] == len(drafts)
+    assert report["ingest_n"] == len(drafts)
+    assert report["tickers"] == len(drafts)
+
+
+def test_qqq_missing_eod_marks_session_error(tmp_path):
+    class NoQqq(Feed):
+        def fetch_eod(self, ticker, start, end):
+            if ticker == "QQQ":
+                return []
+            return super().fetch_eod(ticker, start, end)
+
+    wh = DuckDbWarehouse(tmp_path)
+
+    class Uni:
+        def fetch_universe(self):
+            return UniverseSnapshot(drafts=seed_drafts()[:3], source="nasdaq", warnings=[])
+
+        def fetch_us_stocks(self):
+            return self.fetch_universe().drafts
+
+    feed = NoQqq()
+    svc = DailyUpdateService(
+        wh,
+        Uni(),
+        feed,
+        feed,
+        Cal(),
+        seed_sessions=1,
+        max_tickers=0,
+        concurrency=1,
+        open_window_minutes=5,
+    )
+    report = svc.run()
+    assert report["sessions"][0]["status"] == "error"
+    assert "QQQ missing EOD" in report["sessions"][0]["error"]
+    assert wh.last_success_as_of() is None
+
+
 def test_daily_continues_after_session_error(tmp_path):
     wh = DuckDbWarehouse(tmp_path)
     drafts = [SecurityDraft(ticker="AAA", name="Aaa", exchange="NYSE")]

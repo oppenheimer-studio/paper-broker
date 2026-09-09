@@ -36,4 +36,4 @@ curl -s -X POST http://127.0.0.1:8080/v1/screener \
   -d '{"preset":"open_relvol"}'
 ```
 
-`INGEST_MAX_TICKERS=50` en el primer deploy. El job recorre por market cap (o dollar volume si aún no hay shares). Catch-up desde el último `success`. Re-run el mismo día solo completa huecos.
+`INGEST_MAX_TICKERS=0` (todo el universo US filtrado). El job recorre por market cap (o dollar volume si aún no hay shares). Catch-up desde el último `success`. Re-run el mismo día solo completa huecos.

@@ -9,6 +9,7 @@ $LAKE_PATH/
   securities.parquet
   daily_data/YYYY-MM-DD.parquet
   minute_open/YYYY-MM-DD.parquet
+  corporate_actions/YYYY-MM-DD.parquet
   daily_market/YYYY-MM-DD.parquet
   derived_daily_data/YYYY-MM-DD.parquet
   meta/ingest_runs.parquet
@@ -23,6 +24,7 @@ Un archivo por sesión. Reescribir ese archivo es el upsert del día: no se dupl
 | Identidad | `securities` | esa empresa |
 | Sesión × ticker | `daily_data` | OHLCV de esa sesión |
 | Apertura × ticker | `minute_open` | volumen (y ohlc) de los primeros N minutos RTH |
+| Sesión × ticker | `corporate_actions` | split o dividendo Yahoo de esa fecha |
 | Sesión × mercado | `daily_market` | vix, us10y, oil, gold, … |
 | Derived sesión | `derived_daily_data` | ATR, avg vol, relvol at, mcap, … |
 | Meta | `ingest_runs` | un intento de daily para un `as_of` |
@@ -48,6 +50,10 @@ Universo etapa 1: common stock / ADR US. Fuera: warrant, unit, right, test issue
 `security_id`, `date`, `window_minutes` (default 5), `open`, `high`, `low`, `close`, `volume`, `source`.
 
 `volume` = suma de las velas 1m en `[09:30, 09:30+window)` America/New_York.
+
+## `corporate_actions`
+
+`security_id`, `date`, `action` (`split`|`dividend`), `value` (monto o ratio), `numerator`, `denominator`, `source`. Sale del chart Yahoo 1d (`events=div|split`), no de un request extra.
 
 ## `derived_daily_data`
 

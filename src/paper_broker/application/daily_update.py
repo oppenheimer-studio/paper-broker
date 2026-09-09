@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta, timezone
 from threading import Lock
 from typing import Any
+from zoneinfo import ZoneInfo
 
 from paper_broker.application.catchup import pending_sessions
 from paper_broker.domain.models import (
+    CorporateAction,
     DailyBar,
     IngestStatus,
     MinuteOpenBar,
@@ -16,6 +19,24 @@ from paper_broker.domain.ports import MarketCalendar, MinuteFeed, PriceFeed, Uni
 from paper_broker.logging import get_logger
 
 log = get_logger("daily_update")
+ASUNCION = ZoneInfo("America/Asuncion")
+ET = ZoneInfo("America/New_York")
+
+
+@dataclass
+class _EodPass:
+    rows: int = 0
+    actions: int = 0
+    ok: list[str] = field(default_factory=list)
+    fail: list[str] = field(default_factory=list)
+
+
+@dataclass
+class _MinutePass:
+    rows: int = 0
+    ok: list[str] = field(default_factory=list)
+    empty: list[str] = field(default_factory=list)
+    fail: list[str] = field(default_factory=list)
 
 
 class DailyUpdateService:
@@ -136,6 +157,9 @@ class DailyUpdateService:
                 "last_success": str(last) if last else None,
                 "expected": str(expected),
                 "pending": [str(d) for d in pending],
+                "now_utc": now.isoformat(),
+                "now_et": now.astimezone(ET).isoformat(),
+                "now_asuncion": now.astimezone(ASUNCION).isoformat(),
             },
         )
         log.info(
@@ -143,11 +167,13 @@ class DailyUpdateService:
             last_success=str(last) if last else None,
             expected=str(expected),
             pending=[str(d) for d in pending],
+            now_utc=now.isoformat(),
+            now_et=now.astimezone(ET).isoformat(),
+            now_asuncion=now.astimezone(ASUNCION).isoformat(),
         )
         if not pending:
             return {"status": "ok", "pending": [], "note": "nothing to do"}
 
-        snap = None
         if hasattr(self._universe, "fetch_universe"):
             snap = self._universe.fetch_universe()
             drafts = snap.drafts
@@ -169,24 +195,65 @@ class DailyUpdateService:
 
         securities = self._wh.upsert_securities(drafts)
         chosen = self._choose(securities)
-        log.info("universe_ranked", n=len(chosen), cap=self._max_tickers, source=source)
+        log.info(
+            "universe_ranked",
+            universe_n=len(securities),
+            ingest_n=len(chosen),
+            cap=self._max_tickers,
+            source=source,
+        )
 
         start, end = pending[0], pending[-1]
-        eod_rows, eod_fail = self._ingest_eod(chosen, start, end)
-        open_rows, minute_fail = self._ingest_minute_open(chosen, start, end)
-        if eod_fail or minute_fail:
+        eod = self._ingest_eod(chosen, start, end)
+        if eod.fail:
+            retry_eod = [s for s in chosen if s.ticker in set(eod.fail)]
+            log.info("eod_retry", n=len(retry_eod))
+            extra = self._ingest_eod(retry_eod, start, end)
+            eod = _EodPass(
+                rows=eod.rows + extra.rows,
+                actions=eod.actions + extra.actions,
+                ok=sorted(set(eod.ok + extra.ok)),
+                fail=extra.fail,
+            )
+        minutes = self._ingest_minute_open(chosen, start, end)
+        if minutes.fail or minutes.empty:
+            retry_m = [s for s in chosen if s.ticker in set(minutes.fail + minutes.empty)]
+            log.info("minute_retry", n=len(retry_m))
+            extra_m = self._ingest_minute_open(retry_m, start, end)
+            minutes = _MinutePass(
+                rows=minutes.rows + extra_m.rows,
+                ok=sorted(set(minutes.ok + extra_m.ok)),
+                empty=extra_m.empty,
+                fail=extra_m.fail,
+            )
+
+        if eod.fail or minutes.fail or minutes.empty:
             self._emit(
                 "warning",
                 "daily.ticker_errors",
                 "Some tickers failed during ingest",
-                detail=f"eod_fail={len(eod_fail)} minute_fail={len(minute_fail)}",
-                data={"eod_fail": eod_fail[:40], "minute_fail": minute_fail[:40]},
+                detail=(
+                    f"universe={len(chosen)} eod_ok={len(eod.ok)} eod_fail={len(eod.fail)} "
+                    f"minute_ok={len(minutes.ok)} minute_empty={len(minutes.empty)} "
+                    f"minute_fail={len(minutes.fail)}"
+                ),
+                data={
+                    "universe": len(chosen),
+                    "eod_ok": len(eod.ok),
+                    "eod_fail": eod.fail,
+                    "minute_ok": len(minutes.ok),
+                    "minute_empty": minutes.empty,
+                    "minute_fail": minutes.fail,
+                },
             )
 
+        qqq = next((s for s in chosen if s.ticker == "QQQ"), None)
         session_reports = []
         for session in pending:
             run = self._wh.start_run(session, notes="catch-up")
             try:
+                if qqq and session not in self._wh.dates_with_eod(qqq.security_id, session, session):
+                    raise RuntimeError(f"QQQ missing EOD for {session}")
                 derived_n = self._wh.rewrite_derived(
                     session,
                     avg_n=14,
@@ -194,8 +261,13 @@ class DailyUpdateService:
                     relvol_n=14,
                     window_minutes=self._window,
                 )
-                note = f"eod={eod_rows} minute_open={open_rows} derived={derived_n}"
-                self._wh.finish_run(run.run_id, IngestStatus.SUCCESS, note, eod_rows + open_rows + derived_n)
+                note = (
+                    f"eod={eod.rows} minute_open={minutes.rows} actions={eod.actions} "
+                    f"derived={derived_n}"
+                )
+                self._wh.finish_run(
+                    run.run_id, IngestStatus.SUCCESS, note, eod.rows + minutes.rows + derived_n
+                )
                 session_reports.append({"as_of": str(session), "status": "success", "derived": derived_n})
                 log.info("session_success", as_of=str(session), derived=derived_n)
             except Exception as exc:
@@ -235,12 +307,19 @@ class DailyUpdateService:
             "status": status,
             "pending": [str(d) for d in pending],
             "tickers": len(chosen),
+            "universe_n": len(securities),
+            "ingest_n": len(chosen),
+            "cap": self._max_tickers,
             "universe_source": source,
             "universe_warnings": warnings,
-            "eod_upserts": eod_rows,
-            "minute_open_upserts": open_rows,
-            "eod_fail": eod_fail,
-            "minute_fail": minute_fail,
+            "eod_upserts": eod.rows,
+            "minute_open_upserts": minutes.rows,
+            "corporate_actions": eod.actions,
+            "eod_ok": len(eod.ok),
+            "eod_fail": eod.fail,
+            "minute_ok": len(minutes.ok),
+            "minute_empty": minutes.empty,
+            "minute_fail": minutes.fail,
             "sessions": session_reports,
         }
 
@@ -267,17 +346,25 @@ class DailyUpdateService:
                 break
         return ordered
 
-    def _ingest_eod(self, securities: list[Security], start: date, end: date) -> tuple[int, list[str]]:
-        def one(sec: Security) -> tuple[list[DailyBar], str | None]:
+    def _fetch_session(self, ticker: str, start: date, end: date):
+        fetch_session = getattr(self._prices, "fetch_session", None)
+        if callable(fetch_session):
+            return fetch_session(ticker, start, end)
+        return self._prices.fetch_eod(ticker, start, end), []
+
+    def _ingest_eod(self, securities: list[Security], start: date, end: date) -> _EodPass:
+        needed = set(self._calendar.sessions(start, end))
+
+        def one(sec: Security) -> tuple[list[DailyBar], list[CorporateAction], str | None]:
             have = self._wh.dates_with_eod(sec.security_id, start, end)
-            if have == set(self._calendar.sessions(start, end)):
-                log.info("eod_skip", ticker=sec.ticker, reason="already_complete")
-                return [], None
+            if have == needed:
+                log.debug("eod_skip", ticker=sec.ticker, reason="already_complete")
+                return [], [], None
             try:
-                raw = self._prices.fetch_eod(sec.ticker, start, end)
+                raw, actions = self._fetch_session(sec.ticker, start, end)
             except Exception:
                 log.exception("eod_fail", ticker=sec.ticker)
-                return [], sec.ticker
+                return [], [], sec.ticker
             bars = []
             for r in raw:
                 if r.date < start or r.date > end or r.date in have:
@@ -295,41 +382,68 @@ class DailyUpdateService:
                         source=r.source,
                     )
                 )
-            log.info("eod_ok", ticker=sec.ticker, n=len(bars), skipped=len(have))
-            return bars, None
+            corp: list[CorporateAction] = []
+            for a in actions:
+                if a.date < start or a.date > end:
+                    continue
+                corp.append(
+                    CorporateAction(
+                        security_id=sec.security_id,
+                        date=a.date,
+                        action=a.action,
+                        value=a.value,
+                        numerator=a.numerator,
+                        denominator=a.denominator,
+                        source=a.source,
+                    )
+                )
+            log.debug("eod_ok", ticker=sec.ticker, n=len(bars), actions=len(corp), skipped=len(have))
+            got = have | {b.date for b in bars}
+            incomplete = needed - got
+            if incomplete:
+                log.warning(
+                    "eod_incomplete",
+                    ticker=sec.ticker,
+                    missing=[str(d) for d in sorted(incomplete)],
+                )
+                return bars, corp, sec.ticker
+            return bars, corp, None
 
-        written = 0
-        fails: list[str] = []
+        out = _EodPass()
         with ThreadPoolExecutor(max_workers=self._concurrency) as pool:
             futs = {pool.submit(one, s): s.ticker for s in securities}
             for fut in as_completed(futs):
                 ticker = futs[fut]
                 try:
-                    bars, fail = fut.result()
+                    bars, corp, fail = fut.result()
                 except Exception:
                     log.exception("eod_worker_fail", ticker=ticker)
-                    fails.append(ticker)
+                    out.fail.append(ticker)
                     continue
                 if fail:
-                    fails.append(fail)
+                    out.fail.append(fail)
+                else:
+                    out.ok.append(ticker)
                 if bars:
-                    written += self._wh.write_daily_bars(bars)
-        log.info("eod_done", rows=written, fails=len(fails))
-        return written, fails
+                    out.rows += self._wh.write_daily_bars(bars)
+                if corp:
+                    out.actions += self._wh.write_corporate_actions(corp)
+        log.info("eod_done", rows=out.rows, actions=out.actions, ok=len(out.ok), fails=len(out.fail))
+        return out
 
-    def _ingest_minute_open(
-        self, securities: list[Security], start: date, end: date
-    ) -> tuple[int, list[str]]:
-        def one(sec: Security) -> tuple[list[MinuteOpenBar], str | None]:
+    def _ingest_minute_open(self, securities: list[Security], start: date, end: date) -> _MinutePass:
+        needed = set(self._calendar.sessions(start, end))
+
+        def one(sec: Security) -> tuple[list[MinuteOpenBar], str | None, str | None]:
             have = self._wh.dates_with_minute_open(sec.security_id, start, end, self._window)
-            if have == set(self._calendar.sessions(start, end)):
-                log.info("minute_skip", ticker=sec.ticker, reason="already_complete")
-                return [], None
+            if have == needed:
+                log.debug("minute_skip", ticker=sec.ticker, reason="already_complete")
+                return [], None, None
             try:
                 raw = self._minutes.fetch_open_windows(sec.ticker, start, end, self._window)
             except Exception:
                 log.exception("minute_fail", ticker=sec.ticker)
-                return [], sec.ticker
+                return [], sec.ticker, None
             bars = []
             for r in raw:
                 if r.date < start or r.date > end or r.date in have:
@@ -347,24 +461,42 @@ class DailyUpdateService:
                         source=r.source,
                     )
                 )
-            log.info("minute_ok", ticker=sec.ticker, n=len(bars))
-            return bars, None
+            got = have | {b.date for b in bars}
+            if needed - got:
+                log.warning(
+                    "minute_empty",
+                    ticker=sec.ticker,
+                    missing=[str(d) for d in sorted(needed - got)],
+                )
+                return bars, None, sec.ticker
+            log.debug("minute_ok", ticker=sec.ticker, n=len(bars))
+            return bars, None, None
 
-        written = 0
-        fails: list[str] = []
+        out = _MinutePass()
         with ThreadPoolExecutor(max_workers=self._concurrency) as pool:
             futs = {pool.submit(one, s): s.ticker for s in securities}
             for fut in as_completed(futs):
                 ticker = futs[fut]
                 try:
-                    bars, fail = fut.result()
+                    bars, fail, empty = fut.result()
                 except Exception:
                     log.exception("minute_worker_fail", ticker=ticker)
-                    fails.append(ticker)
+                    out.fail.append(ticker)
                     continue
                 if fail:
-                    fails.append(fail)
+                    out.fail.append(fail)
+                    continue
                 if bars:
-                    written += self._wh.write_minute_open(bars)
-        log.info("minute_open_done", rows=written, fails=len(fails))
-        return written, fails
+                    out.rows += self._wh.write_minute_open(bars)
+                if empty:
+                    out.empty.append(empty)
+                else:
+                    out.ok.append(ticker)
+        log.info(
+            "minute_open_done",
+            rows=out.rows,
+            ok=len(out.ok),
+            empty=len(out.empty),
+            fails=len(out.fail),
+        )
+        return out

@@ -24,7 +24,7 @@ Al arrancar el contenedor: `migrate` (bucket MinIO + SQL idempotente) y después
 ADMIN_KEY=...
 LAKE_PATH=/data/lake
 LOG_JSON=true
-INGEST_MAX_TICKERS=50
+INGEST_MAX_TICKERS=0
 INGEST_CONCURRENCY=6
 
 MINIO_ENDPOINT=http://<hostname-interno-minio>:9000
@@ -38,9 +38,10 @@ DATABASE_URL=postgresql://postgres:<PASSWORD>@<hostname-interno-supabase-db>:543
 ```
 
 8. Dominio / proxy a puerto **8080**. MCP es **8081** (exponer si los agentes están fuera).
-9. Cron Coolify, post-cierre ET:
+9. Cron Coolify a las **01:00 America/Asuncion** (04:00 UTC). El job trae la última sesión US **ya cerrada** (ayer ET), no el día en curso. Todos los días; si no hubo sesión, el daily loguea `nothing to do`.
 
 ```
+# 0 4 * * * UTC
 curl -sS -X POST "https://<tu-dominio>/v1/admin/daily" \
   -H "Authorization: Bearer $ADMIN_KEY"
 ```
@@ -68,4 +69,4 @@ Si Wrappers no está en la imagen de Postgres, `002` se loguea y no tumba el con
 
 ## 4. Primera vez
 
-`INGEST_MAX_TICKERS=50`. `POST /v1/admin/daily?wait=true` o esperar el cron. Luego `POST /v1/screener` `{"preset":"open_relvol"}`.
+`INGEST_MAX_TICKERS=0` (universo US completo). `POST /v1/admin/daily` o esperar el cron 01:00 America/Asuncion. Luego `POST /v1/screener` `{"preset":"open_relvol"}`.
