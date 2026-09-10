@@ -80,7 +80,7 @@ def build_mcp(container: Container) -> FastMCP:
         import threading
 
         if not container.daily.can_start(phase):
-            return json.dumps({"status": "already_running", "phase": phase})
+            return json.dumps(container.daily.note_already_running(phase), default=str)
         threading.Thread(
             target=container.daily.run,
             kwargs={"phase": phase},

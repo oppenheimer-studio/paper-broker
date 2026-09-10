@@ -6,7 +6,7 @@ from zoneinfo import ZoneInfo
 
 import httpx
 
-from paper_broker.adapters.rate_limit import HourlyRateLimiter
+from paper_broker.adapters.rate_limit import HourlyRateLimiter, RateLimitTripped
 from paper_broker.domain.models import RawCorporateAction, RawDailyBar, RawMinuteOpen
 from paper_broker.logging import get_logger
 
@@ -45,6 +45,13 @@ class YahooFeed:
     def close(self) -> None:
         self._client.close()
 
+    def reset_circuit(self) -> None:
+        self._limiter.reset_trip()
+
+    @property
+    def circuit_open(self) -> bool:
+        return self._limiter.tripped
+
     @property
     def http(self) -> httpx.Client:
         return self._client
@@ -72,6 +79,8 @@ class YahooFeed:
         out = self._parse_open_windows(ticker, payload, window_minutes, start, end)
         if out:
             return out
+        if self._limiter.tripped:
+            return []
         log.warning("minute_empty_retry", ticker=ticker, start=str(start), end=str(end))
         payload = self._chart(ticker, "1m", period1, period2, events="", prefer_host=CHART_HOSTS[1])
         return self._parse_open_windows(ticker, payload, window_minutes, start, end)
@@ -123,6 +132,8 @@ class YahooFeed:
                     interval=interval,
                     status=exc.status,
                 )
+                if exc.status == 429:
+                    break
                 continue
             result = (payload.get("chart") or {}).get("result") or []
             if result:
@@ -134,20 +145,30 @@ class YahooFeed:
 
     def _get_json(self, url: str, *, ticker: str) -> dict:
         last_exc: Exception | None = None
-        for attempt in range(4):
-            waited = self._limiter.acquire()
+        for attempt in range(2):
+            try:
+                waited = self._limiter.acquire()
+            except RateLimitTripped as exc:
+                raise YahooError(ticker, 429, str(exc)) from exc
             if waited:
                 log.info("yahoo_rate_pace", ticker=ticker, waited_s=round(waited, 1))
             try:
                 res = self._client.get(url)
                 if res.status_code == 429:
-                    wait = 1.5 * (attempt + 1)
-                    log.warning("yahoo_rate_limited", ticker=ticker, attempt=attempt + 1, wait_s=wait)
+                    cooldown = self._limiter.penalize()
+                    log.warning(
+                        "yahoo_rate_limited",
+                        ticker=ticker,
+                        attempt=attempt + 1,
+                        cooldown_s=round(cooldown, 1),
+                        consecutive=self._limiter.consecutive_429,
+                        tripped=self._limiter.tripped,
+                    )
                     last_exc = YahooError(ticker, 429, "rate limited")
-                    time.sleep(wait)
                     continue
                 if res.status_code >= 400:
                     raise YahooError(ticker, res.status_code, res.text[:200])
+                self._limiter.note_success()
                 return res.json()
             except httpx.HTTPError as exc:
                 last_exc = exc

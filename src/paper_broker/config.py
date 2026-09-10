@@ -16,7 +16,8 @@ class Settings(BaseSettings):
     log_level: str = "info"
     log_json: bool = False
     ingest_max_tickers: int = 0
-    ingest_concurrency: int = 6
+    ingest_concurrency: int = 2
+    ingest_minutes_deadline_s: float = 19800
     yahoo_max_requests_per_hour: int = 2500
     defeatbeta_enabled: bool = True
     defeatbeta_base_url: str = (

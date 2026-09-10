@@ -386,3 +386,180 @@ def test_eod_yahoo_fallback_for_missing_ticker(tmp_path):
     assert report["eod_upserts"] >= 5
     assert report["eod_ok"] == 5
 
+
+def test_already_running_emits_event(tmp_path):
+    wh, svc = _svc(tmp_path, SeedUniverse())
+    svc._eod_busy = True
+    svc._minutes_busy = True
+    report = svc.run("eod")
+    assert report["status"] == "already_running"
+    codes = {e.code for e in wh.list_events()}
+    assert "daily.already_running" in codes
+
+
+def test_minutes_ingesting_stays_true_across_retry(tmp_path):
+    from paper_broker.domain.models import RawMinuteOpen
+
+    seen = []
+    wh, svc = _svc(tmp_path, SeedUniverse())
+
+    orig = svc._ingest_minute_open
+
+    def wrapped(securities, start, end):
+        seen.append(svc._minutes_ingesting)
+        result = orig(securities, start, end)
+        seen.append(svc._minutes_ingesting)
+        return result
+
+    class OnceEmpty(Feed):
+        n = 0
+
+        def fetch_open_windows(self, ticker, start, end, window_minutes):
+            self.n += 1
+            if self.n == 1:
+                return []
+            day = start
+            out = []
+            while day <= end:
+                out.append(
+                    RawMinuteOpen(
+                        ticker=ticker,
+                        date=day,
+                        window_minutes=window_minutes,
+                        open=10,
+                        high=11,
+                        low=9,
+                        close=10.2,
+                        volume=50_000,
+                    )
+                )
+                day = date.fromordinal(day.toordinal() + 1)
+            return out
+
+    svc._minutes = OnceEmpty()
+    svc._ingest_minute_open = wrapped
+    svc.run("minutes")
+    assert seen
+    assert all(seen), seen
+
+
+def test_eod_refreshes_calendar_after_hf_ready(tmp_path):
+    class FlipCal:
+        n = 0
+
+        def invalidate(self):
+            self.n += 1
+
+        def expected_as_of(self, now):
+            return date(2026, 9, 9) if self.n >= 2 else date(2026, 9, 8)
+
+        def sessions(self, start, end):
+            days = [date(2026, 9, 8), date(2026, 9, 9)]
+            return [d for d in days if start <= d <= end]
+
+    class Ready:
+        ranges: list = []
+
+        def sessions_ready(self, dates):
+            return True
+
+        def fetch_range(self, start, end):
+            self.ranges.append((start, end))
+            bars = []
+            day = start
+            while day <= end:
+                for ticker in ("QQQ", "SPY", "AAPL", "MSFT", "NVDA"):
+                    bars.append(
+                        RawDailyBar(
+                            ticker=ticker,
+                            date=day,
+                            open=10,
+                            high=11,
+                            low=9,
+                            close=10.5,
+                            adj_close=10.5,
+                            volume=1_000_000,
+                            source="defeatbeta",
+                        )
+                    )
+                day = date.fromordinal(day.toordinal() + 1)
+            return bars, []
+
+    bulk = Ready()
+    wh = DuckDbWarehouse(tmp_path)
+    svc = DailyUpdateService(
+        wh,
+        SeedUniverse(),
+        Feed(),
+        Feed(),
+        FlipCal(),
+        seed_sessions=1,
+        max_tickers=0,
+        concurrency=1,
+        open_window_minutes=5,
+        eod_bulk=bulk,
+    )
+    report = svc.run("eod")
+    assert bulk.ranges
+    assert bulk.ranges[0][1] == date(2026, 9, 9)
+    assert date(2026, 9, 9).isoformat() in report["pending"]
+    assert report["status"] in {"ok", "partial"}
+
+
+def test_eod_skips_yahoo_fallback_while_minutes_ingesting(tmp_path):
+    class PartialBulk:
+        def sessions_ready(self, dates):
+            return True
+
+        def fetch_range(self, start, end):
+            bars = []
+            day = start
+            while day <= end:
+                bars.append(
+                    RawDailyBar(
+                        ticker="QQQ",
+                        date=day,
+                        open=1,
+                        high=2,
+                        low=1,
+                        close=1.5,
+                        adj_close=1.5,
+                        volume=10,
+                        source="defeatbeta",
+                    )
+                )
+                day = date.fromordinal(day.toordinal() + 1)
+            return bars, []
+
+    yahoo_calls = []
+
+    class Counting(Feed):
+        def fetch_eod(self, ticker, start, end):
+            yahoo_calls.append(ticker)
+            return super().fetch_eod(ticker, start, end)
+
+        def fetch_session(self, ticker, start, end):
+            yahoo_calls.append(ticker)
+            return super().fetch_eod(ticker, start, end), []
+
+    wh = DuckDbWarehouse(tmp_path)
+    feed = Counting()
+    svc = DailyUpdateService(
+        wh,
+        SeedUniverse(),
+        feed,
+        feed,
+        Cal(),
+        seed_sessions=1,
+        max_tickers=0,
+        concurrency=1,
+        open_window_minutes=5,
+        eod_bulk=PartialBulk(),
+    )
+    svc._begin_peer_write = lambda who: None
+    svc._minutes_ingesting = True
+    report = svc.run("eod")
+    assert not yahoo_calls
+    assert report["eod_source"] == "defeatbeta"
+    assert report["eod_ok"] == 1
+

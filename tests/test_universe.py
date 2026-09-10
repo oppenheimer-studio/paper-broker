@@ -72,3 +72,22 @@ def test_full_nasdaq_and_other():
     assert snap.source == "nasdaq"
     tickers = {d.ticker for d in snap.drafts}
     assert {"AAPL", "IBM", "QQQ"} <= tickers
+
+
+def test_skips_preferred_dollar_tickers():
+    text = """ACT Symbol|Security Name|Exchange|CQS Symbol|ETF|Round Lot Size|Test Issue|NASDAQ Symbol
+MS$A|Morgan Stanley Dep Shares|N|MS$A|N|100|N|MS$A
+IBM|International Business Machines Corporation|N|IBM|N|100|N|IBM
+"""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if "nasdaqlisted" in str(request.url):
+            return httpx.Response(200, text=NASDAQ_TXT)
+        if "otherlisted" in str(request.url):
+            return httpx.Response(200, text=text)
+        return httpx.Response(404)
+
+    uni = NasdaqUniverse(client=_client(handler), retries=1)
+    tickers = {d.ticker for d in uni.fetch_universe().drafts}
+    assert "IBM" in tickers
+    assert "MS$A" not in tickers

@@ -13,7 +13,8 @@ def pending_sessions(
     """Sessions the daily job must cover. Inclusive of `expected`. Empty if nothing to do.
 
     First run: last `seed_sessions` calendar days up to expected.
-    Catch-up: every calendar session after last_success through expected.
+    Catch-up: every calendar session from last_success through expected (inclusive)
+    so a thin prior day (e.g. 51-ticker seed) is filled from Defeatbeta.
     Same-day re-run: still returns [expected] so the job can fill gaps (idempotent skips).
     """
     if expected is None:
@@ -23,12 +24,8 @@ def pending_sessions(
         return []
     if last_success is None:
         return sessions[-seed_sessions:]
-    after = [d for d in sessions if d > last_success]
-    if after:
-        return after
-    if last_success == expected:
-        return [expected]
-    return []
+    covered = [d for d in sessions if last_success <= d <= expected]
+    return covered
 
 
 def next_day(d: date) -> date:

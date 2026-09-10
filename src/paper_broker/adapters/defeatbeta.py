@@ -73,6 +73,31 @@ class DefeatbetaFeed:
         log.info("defeatbeta_ready", dates=sorted(needed), spec_update=spec.get("update_time"))
         return True
 
+    def local_session_dates(self, ticker: str = "QQQ") -> list[date]:
+        """QQQ (or other) session dates from an already-downloaded parquet. No HTTP."""
+        path = self.cache_dir / PRICE_FILE
+        if not path.is_file() or path.stat().st_size <= 0:
+            return []
+        try:
+            rows = self._con.execute(
+                """
+                SELECT DISTINCT CAST(report_date AS VARCHAR)
+                FROM read_parquet(?)
+                WHERE upper(symbol) = ?
+                ORDER BY 1
+                """,
+                [str(path), ticker.upper()],
+            ).fetchall()
+        except Exception:
+            log.exception("defeatbeta_local_dates_failed", ticker=ticker)
+            return []
+        out: list[date] = []
+        for row in rows:
+            day = _as_date(row[0])
+            if day is not None:
+                out.append(day)
+        return out
+
     def fetch_range(
         self, start: date, end: date
     ) -> tuple[list[RawDailyBar], list[RawCorporateAction]]:

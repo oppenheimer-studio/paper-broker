@@ -91,3 +91,16 @@ def test_warehouse_fallback_when_yahoo_fails():
     cal = QqqCalendar(_BoomFeed(), warehouse=_Wh())
     now = datetime(2026, 9, 9, 1, 0, tzinfo=ASUNCION)
     assert cal.expected_as_of(now) == date(2026, 9, 8)
+
+
+class _Bulk:
+    def local_session_dates(self, ticker="QQQ"):
+        assert ticker == "QQQ"
+        return [date(2026, 9, 8), date(2026, 9, 9)]
+
+
+def test_bulk_local_dates_advance_calendar_past_stale_warehouse():
+    yahoo = _BoomFeed()
+    cal = QqqCalendar(yahoo, warehouse=_Wh(), bulk_feed=_Bulk())
+    now = datetime(2026, 9, 10, 10, 0, tzinfo=ASUNCION)
+    assert cal.expected_as_of(now) == date(2026, 9, 9)

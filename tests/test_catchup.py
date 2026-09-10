@@ -14,7 +14,7 @@ def test_catchup_yesterday_and_today():
     pending = pending_sessions(
         last_success=date(2026, 9, 8), expected=date(2026, 9, 10), calendar=cal, seed_sessions=14
     )
-    assert pending == [date(2026, 9, 9), date(2026, 9, 10)]
+    assert pending == [date(2026, 9, 8), date(2026, 9, 9), date(2026, 9, 10)]
 
 
 def test_same_day_rerun_still_lists_expected():

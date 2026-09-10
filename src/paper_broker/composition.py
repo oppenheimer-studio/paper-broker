@@ -42,7 +42,7 @@ def build(settings: Settings | None = None) -> Container:
             base_url=settings.defeatbeta_base_url,
         )
     universe = NasdaqUniverse(timeout=settings.http_timeout_s, warehouse=warehouse)
-    calendar = QqqCalendar(yahoo, warehouse=warehouse)
+    calendar = QqqCalendar(yahoo, warehouse=warehouse, bulk_feed=defeatbeta)
     minio = None
     if settings.minio_endpoint and settings.minio_access_key and settings.minio_secret_key:
         minio = MinioSync(
@@ -68,6 +68,7 @@ def build(settings: Settings | None = None) -> Container:
         eod_ready_attempts=settings.eod_ready_attempts,
         eod_ready_wait_s=settings.eod_ready_wait_s,
         eod_give_up_hour=settings.eod_give_up_hour,
+        minutes_deadline_s=settings.ingest_minutes_deadline_s,
     )
     return Container(
         settings=settings,

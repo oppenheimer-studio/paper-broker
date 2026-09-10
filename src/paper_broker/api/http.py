@@ -67,13 +67,7 @@ def create_app(container: Container) -> FastAPI:
         if wait:
             return container.daily.run(phase)
         if not container.daily.can_start(phase):
-            return JSONResponse(
-                {
-                    "status": "already_running",
-                    "phase": phase,
-                    "report": container.daily.last_report,
-                }
-            )
+            return JSONResponse(container.daily.note_already_running(phase))
         threading.Thread(
             target=container.daily.run,
             kwargs={"phase": phase},

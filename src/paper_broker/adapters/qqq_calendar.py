@@ -17,11 +17,16 @@ class QqqCalendar:
 
     expected_as_of is the last QQQ session strictly before today's ET date.
     A 01:00 America/Asuncion run therefore picks yesterday's US cash session.
+
+    Sources, merged: warehouse, local Defeatbeta parquet (no download), Yahoo
+    only when the merged set looks stale. Yahoo 429 must not pin the clock to
+    a thin warehouse seed.
     """
 
-    def __init__(self, price_feed, warehouse=None) -> None:
+    def __init__(self, price_feed, warehouse=None, bulk_feed=None) -> None:
         self._feed = price_feed
         self._warehouse = warehouse
+        self._bulk = bulk_feed
         self._cache: list[RawDailyBar] | None = None
 
     def expected_as_of(self, now: datetime) -> date | None:
@@ -29,7 +34,7 @@ class QqqCalendar:
         now_et = now_utc.astimezone(ET)
         now_py = now_utc.astimezone(ASUNCION)
         today_et = now_et.date()
-        bars = self._bars()
+        bars = self._bars(today_et)
         prior = [b.date for b in bars if b.date < today_et]
         expected = prior[-1] if prior else None
         log.info(
@@ -47,30 +52,79 @@ class QqqCalendar:
         return expected
 
     def sessions(self, start: date, end: date) -> list[date]:
-        bars = self._bars()
+        today_et = datetime.now(ET).date()
+        bars = self._bars(today_et)
         return [b.date for b in bars if start <= b.date <= end]
 
-    def _bars(self) -> list[RawDailyBar]:
+    def _bars(self, today_et: date) -> list[RawDailyBar]:
         if self._cache is None:
-            end = datetime.now(ET).date()
+            end = today_et
             start = end - timedelta(days=120)
-            live: list[RawDailyBar] = []
-            try:
-                live = self._feed.fetch_eod(QQQ, start, end) or []
-            except Exception:
-                log.exception("qqq_calendar_fetch_failed", start=str(start), end=str(end))
-            source = "yahoo"
-            if not live:
-                live = self._from_warehouse(start, end)
-                source = "warehouse"
-            self._cache = live
+            by_date: dict[date, RawDailyBar] = {}
+            sources: list[str] = []
+            for bar in self._from_warehouse(start, end):
+                by_date[bar.date] = bar
+            if by_date:
+                sources.append("warehouse")
+            for bar in self._from_bulk(start, end):
+                by_date.setdefault(bar.date, bar)
+            if self._bulk is not None and any(b.source == "defeatbeta" for b in by_date.values()):
+                sources.append("defeatbeta")
+            stale = not by_date or max(by_date) < today_et - timedelta(days=1)
+            if stale:
+                live = self._from_yahoo(start, end)
+                if live:
+                    sources.append("yahoo")
+                    for bar in live:
+                        by_date[bar.date] = bar
+            self._cache = [by_date[d] for d in sorted(by_date)]
             log.info(
                 "qqq_calendar_loaded",
                 n=len(self._cache),
                 last=str(self._cache[-1].date) if self._cache else None,
-                source=source,
+                source="+".join(sources) or "empty",
             )
         return self._cache
+
+    def _from_yahoo(self, start: date, end: date) -> list[RawDailyBar]:
+        try:
+            live = self._feed.fetch_eod(QQQ, start, end) or []
+        except Exception:
+            log.exception("qqq_calendar_fetch_failed", start=str(start), end=str(end))
+            return []
+        return live
+
+    def _from_bulk(self, start: date, end: date) -> list[RawDailyBar]:
+        if self._bulk is None:
+            return []
+        listing = getattr(self._bulk, "local_session_dates", None)
+        if not callable(listing):
+            return []
+        try:
+            days = listing(QQQ) or []
+        except Exception:
+            log.exception("qqq_calendar_bulk_failed")
+            return []
+        out: list[RawDailyBar] = []
+        for day in days:
+            if not isinstance(day, date) or day < start or day > end:
+                continue
+            out.append(
+                RawDailyBar(
+                    ticker=QQQ,
+                    date=day,
+                    open=0,
+                    high=0,
+                    low=0,
+                    close=0,
+                    adj_close=0,
+                    volume=0,
+                    source="defeatbeta",
+                )
+            )
+        if out:
+            log.info("qqq_calendar_bulk", n=len(out), last=str(out[-1].date))
+        return out
 
     def _from_warehouse(self, start: date, end: date) -> list[RawDailyBar]:
         if self._warehouse is None:
@@ -102,8 +156,8 @@ class QqqCalendar:
             )
         out.sort(key=lambda b: b.date)
         if out:
-            log.warning(
-                "qqq_calendar_warehouse_fallback",
+            log.info(
+                "qqq_calendar_warehouse",
                 n=len(out),
                 last=str(out[-1].date),
             )

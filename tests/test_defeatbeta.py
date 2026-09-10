@@ -64,3 +64,33 @@ def test_sessions_ready_and_fetch_range(tmp_path, monkeypatch):
     assert split.numerator == 4
     assert split.denominator == 1
     feed.close()
+
+
+def test_local_session_dates_reads_cached_parquet_only(tmp_path):
+    _write_prices(
+        tmp_path,
+        [
+            {
+                "symbol": "QQQ",
+                "report_date": "2026-09-08",
+                "open": 1,
+                "high": 2,
+                "low": 0.5,
+                "close": 1.5,
+                "volume": 100,
+            },
+            {
+                "symbol": "QQQ",
+                "report_date": "2026-09-09",
+                "open": 1,
+                "high": 2,
+                "low": 0.5,
+                "close": 1.6,
+                "volume": 110,
+            },
+        ],
+    )
+    feed = DefeatbetaFeed(tmp_path, timeout=5)
+    days = feed.local_session_dates("QQQ")
+    assert days == [date(2026, 9, 8), date(2026, 9, 9)]
+    feed.close()

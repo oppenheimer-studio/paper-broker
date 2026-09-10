@@ -68,6 +68,7 @@ class DailyUpdateService:
         eod_ready_attempts: int = 6,
         eod_ready_wait_s: float = 1800,
         eod_give_up_hour: int = 9,
+        minutes_deadline_s: float = 19800,
         sleeper: Callable[[float], None] = time.sleep,
         now_fn: Callable[[], datetime] | None = None,
     ) -> None:
@@ -86,6 +87,7 @@ class DailyUpdateService:
         self._eod_ready_attempts = max(1, eod_ready_attempts)
         self._eod_ready_wait_s = max(0.0, eod_ready_wait_s)
         self._eod_give_up_hour = eod_give_up_hour
+        self._minutes_deadline_s = max(0.0, float(minutes_deadline_s))
         self._sleeper = sleeper
         self._now_fn = now_fn or (lambda: datetime.now(timezone.utc))
         self._lock = Lock()
@@ -124,6 +126,18 @@ class DailyUpdateService:
             return not self._eod_busy
         return not self._eod_busy and not self._minutes_busy
 
+    def note_already_running(self, phase: str) -> dict:
+        log.warning("daily_already_running", phase=phase)
+        report = {"status": "already_running", "phase": phase, "report": self.last_report}
+        self._emit(
+            "warning",
+            "daily.already_running",
+            f"{phase} update skipped; previous job still running",
+            detail="cron no-op: ingest_running",
+            data={"phase": phase, "eod_busy": self._eod_busy, "minutes_busy": self._minutes_busy},
+        )
+        return report
+
     def _emit(
         self,
         level: str,
@@ -152,8 +166,7 @@ class DailyUpdateService:
         started_minutes = False
         with self._lock:
             if not self.can_start(phase):
-                log.warning("daily_already_running", phase=phase)
-                return {"status": "already_running", "phase": phase, "report": self.last_report}
+                return self.note_already_running(phase)
             if phase in {"all", "eod"}:
                 self._eod_busy = True
                 started_eod = True
@@ -161,6 +174,7 @@ class DailyUpdateService:
                 self._minutes_busy = True
                 started_minutes = True
             self.running = True
+        self._reset_yahoo_circuit()
         try:
             report = self._run(phase)
             self.last_report = report
@@ -205,18 +219,25 @@ class DailyUpdateService:
     def _run(self, phase: str) -> dict:
         do_eod = phase in {"all", "eod"}
         do_minutes = phase in {"all", "minutes"}
-        if hasattr(self._calendar, "invalidate"):
-            self._calendar.invalidate()
-        now = self._now_fn()
-        expected = self._calendar.expected_as_of(now)
-        last = self._wh.last_success_as_of()
+        expected, last, pending = self._load_pending(refresh=True)
         if expected is None:
             log.error("no_expected_as_of")
             return {"status": "error", "phase": phase, "error": "no QQQ calendar"}
-        cal = self._calendar.sessions(expected - timedelta(days=120), expected)
-        pending = pending_sessions(
-            last_success=last, expected=expected, calendar=cal, seed_sessions=self._seed
-        )
+        if do_eod:
+            first_pending = list(pending)
+            blocked = self._wait_eod_ready(pending or [expected])
+            if blocked is not None:
+                blocked.update({"phase": phase, "pending": [str(d) for d in pending]})
+                return blocked
+            expected, last, pending = self._load_pending(refresh=True)
+            if expected is None:
+                return {"status": "error", "phase": phase, "error": "no QQQ calendar"}
+            if pending != first_pending:
+                blocked = self._wait_eod_ready(pending or [expected])
+                if blocked is not None:
+                    blocked.update({"phase": phase, "pending": [str(d) for d in pending]})
+                    return blocked
+        now = self._now_fn()
         self._emit(
             "info",
             "daily.started",
@@ -278,28 +299,17 @@ class DailyUpdateService:
         start, end = pending[0], pending[-1]
         eod = _EodPass()
         minutes = _MinutePass()
+        yahoo_names = [s for s in chosen if "$" not in s.ticker]
 
         if do_eod:
-            blocked = self._wait_eod_ready(pending)
-            if blocked is not None:
-                blocked.update(
-                    {
-                        "phase": phase,
-                        "pending": [str(d) for d in pending],
-                        "tickers": len(chosen),
-                        "universe_n": len(securities),
-                        "ingest_n": len(chosen),
-                    }
-                )
-                return blocked
             if phase == "eod":
                 self._begin_peer_write("eod")
             else:
                 self._eod_writing = True
             try:
                 eod = self._ingest_eod(chosen, start, end)
-                if eod.fail:
-                    retry_eod = [s for s in chosen if s.ticker in set(eod.fail)]
+                if eod.fail and not self._minutes_ingesting and not self._yahoo_tripped():
+                    retry_eod = [s for s in yahoo_names if s.ticker in set(eod.fail)]
                     log.info("eod_retry", n=len(retry_eod))
                     extra = self._ingest_eod(retry_eod, start, end, yahoo_only=True)
                     eod = _EodPass(
@@ -315,17 +325,22 @@ class DailyUpdateService:
         if do_minutes:
             if phase == "minutes":
                 self._begin_peer_write("minutes")
-            minutes = self._ingest_minute_open(chosen, start, end)
-            if minutes.fail or minutes.empty:
-                retry_m = [s for s in chosen if s.ticker in set(minutes.fail + minutes.empty)]
-                log.info("minute_retry", n=len(retry_m))
-                extra_m = self._ingest_minute_open(retry_m, start, end)
-                minutes = _MinutePass(
-                    rows=minutes.rows + extra_m.rows,
-                    ok=sorted(set(minutes.ok + extra_m.ok)),
-                    empty=extra_m.empty,
-                    fail=extra_m.fail,
-                )
+            else:
+                self._minutes_ingesting = True
+            try:
+                minutes = self._ingest_minute_open(yahoo_names, start, end)
+                if (minutes.fail or minutes.empty) and not self._yahoo_tripped():
+                    retry_m = [s for s in yahoo_names if s.ticker in set(minutes.fail + minutes.empty)]
+                    log.info("minute_retry", n=len(retry_m))
+                    extra_m = self._ingest_minute_open(retry_m, start, end)
+                    minutes = _MinutePass(
+                        rows=minutes.rows + extra_m.rows,
+                        ok=sorted(set(minutes.ok + extra_m.ok)),
+                        empty=extra_m.empty,
+                        fail=extra_m.fail,
+                    )
+            finally:
+                self._minutes_ingesting = False
 
         if (do_eod and eod.fail) or (do_minutes and (minutes.fail or minutes.empty)):
             self._emit(
@@ -452,6 +467,32 @@ class DailyUpdateService:
             "error": "defeatbeta_not_ready",
             "note": "DefeatbetaFeed not ready",
         }
+
+    def _load_pending(self, *, refresh: bool) -> tuple[date | None, date | None, list[date]]:
+        if refresh and hasattr(self._calendar, "invalidate"):
+            self._calendar.invalidate()
+        now = self._now_fn()
+        expected = self._calendar.expected_as_of(now)
+        last = self._wh.last_success_as_of()
+        if expected is None:
+            return None, last, []
+        cal = self._calendar.sessions(expected - timedelta(days=120), expected)
+        pending = pending_sessions(
+            last_success=last, expected=expected, calendar=cal, seed_sessions=self._seed
+        )
+        return expected, last, pending
+
+    def _reset_yahoo_circuit(self) -> None:
+        for feed in (self._prices, self._minutes):
+            reset = getattr(feed, "reset_circuit", None)
+            if callable(reset):
+                reset()
+
+    def _yahoo_tripped(self) -> bool:
+        for feed in (self._prices, self._minutes):
+            if bool(getattr(feed, "circuit_open", False)):
+                return True
+        return False
 
     def _begin_peer_write(self, who: str) -> None:
         while True:
@@ -596,10 +637,22 @@ class DailyUpdateService:
                     out.ok.append(sec.ticker)
             remaining = still
             if remaining:
-                out.source = "mixed"
-                log.info("eod_yahoo_fallback", n=len(remaining))
+                preferred = [s for s in remaining if "$" in s.ticker]
+                remaining = [s for s in remaining if "$" not in s.ticker]
+                if preferred:
+                    out.fail.extend(s.ticker for s in preferred)
+                    log.info("eod_skip_preferred", n=len(preferred))
+                if remaining and self._minutes_ingesting:
+                    log.warning("eod_yahoo_fallback_skipped_minutes_busy", n=len(remaining))
+                    out.fail.extend(s.ticker for s in remaining)
+                    remaining = []
+                elif remaining:
+                    out.source = "mixed"
+                    log.info("eod_yahoo_fallback", n=len(remaining))
 
         def one(sec: Security) -> tuple[list[DailyBar], list[CorporateAction], str | None]:
+            if self._yahoo_tripped():
+                return [], [], sec.ticker
             have = haves[sec.ticker]
             if have == needed:
                 log.debug("eod_skip", ticker=sec.ticker, reason="already_complete")
@@ -623,6 +676,13 @@ class DailyUpdateService:
             return bars, corp, None
 
         haves = {s.ticker: self._wh.dates_with_eod(s.security_id, start, end) for s in remaining}
+
+        remaining = [s for s in remaining if "$" not in s.ticker]
+        if remaining and self._minutes_ingesting:
+            log.warning("eod_yahoo_fallback_skipped_minutes_busy", n=len(remaining))
+            out.fail.extend(s.ticker for s in remaining)
+            remaining = []
+            haves = {}
 
         with ThreadPoolExecutor(max_workers=self._concurrency) as pool:
             futs = {pool.submit(one, s): s.ticker for s in remaining}
@@ -693,6 +753,9 @@ class DailyUpdateService:
     def _ingest_minute_open(self, securities: list[Security], start: date, end: date) -> _MinutePass:
         needed = set(self._calendar.sessions(start, end))
         self._minutes_ingesting = True
+        deadline = None
+        if self._minutes_deadline_s:
+            deadline = self._now_fn() + timedelta(seconds=self._minutes_deadline_s)
 
         haves = {
             s.ticker: self._wh.dates_with_minute_open(s.security_id, start, end, self._window)
@@ -700,6 +763,11 @@ class DailyUpdateService:
         }
 
         def one(sec: Security) -> tuple[list[MinuteOpenBar], str | None, str | None]:
+            if deadline is not None and self._now_fn() >= deadline:
+                log.warning("minute_deadline", ticker=sec.ticker)
+                return [], sec.ticker, None
+            if self._yahoo_tripped():
+                return [], sec.ticker, None
             have = haves[sec.ticker]
             if have == needed:
                 log.debug("minute_skip", ticker=sec.ticker, reason="already_complete")
@@ -738,28 +806,25 @@ class DailyUpdateService:
             return bars, None, None
 
         out = _MinutePass()
-        try:
-            with ThreadPoolExecutor(max_workers=self._concurrency) as pool:
-                futs = {pool.submit(one, s): s.ticker for s in securities}
-                for fut in as_completed(futs):
-                    ticker = futs[fut]
-                    try:
-                        bars, fail, empty = fut.result()
-                    except Exception:
-                        log.exception("minute_worker_fail", ticker=ticker)
-                        out.fail.append(ticker)
-                        continue
-                    if fail:
-                        out.fail.append(fail)
-                        continue
-                    if bars:
-                        out.rows += self._wh.write_minute_open(bars)
-                    if empty:
-                        out.empty.append(empty)
-                    else:
-                        out.ok.append(ticker)
-        finally:
-            self._minutes_ingesting = False
+        with ThreadPoolExecutor(max_workers=self._concurrency) as pool:
+            futs = {pool.submit(one, s): s.ticker for s in securities}
+            for fut in as_completed(futs):
+                ticker = futs[fut]
+                try:
+                    bars, fail, empty = fut.result()
+                except Exception:
+                    log.exception("minute_worker_fail", ticker=ticker)
+                    out.fail.append(ticker)
+                    continue
+                if fail:
+                    out.fail.append(fail)
+                    continue
+                if bars:
+                    out.rows += self._wh.write_minute_open(bars)
+                if empty:
+                    out.empty.append(empty)
+                else:
+                    out.ok.append(ticker)
         log.info(
             "minute_open_done",
             rows=out.rows,
