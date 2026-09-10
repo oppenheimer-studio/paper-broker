@@ -169,6 +169,8 @@ def test_screener_default_is_latest_us_by_market_cap(tmp_path):
     assert set(by_ticker) == {"OLD", "NEW"}
     assert by_ticker["OLD"].as_of == old_day
     assert by_ticker["NEW"].as_of == new_day
+    # No shares outstanding yet: default market-cap sort uses dollar volume.
+    assert [r.ticker for r in rows] == ["NEW", "OLD"]
     pinned = ScreenerService(wh).run(ScreenerRequest(as_of=new_day))
     assert {r.ticker for r in pinned} == {"NEW"}
 

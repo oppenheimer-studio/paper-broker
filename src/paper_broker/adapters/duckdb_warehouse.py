@@ -623,8 +623,14 @@ class DuckDbWarehouse:
         sort = req.sort or "market_cap"
         if sort == "as_of":
             sort = "date"
+        ascending = req.sort_dir != "desc"
         if sort in df.columns:
-            df = df.sort_values(sort, ascending=req.sort_dir != "desc", na_position="last")
+            by = [sort]
+            # Shares outstanding is still sparse, so size ranking falls back to
+            # dollar volume instead of a random parquet order.
+            if sort == "market_cap" and "dollar_volume" in df.columns:
+                by.append("dollar_volume")
+            df = df.sort_values(by, ascending=ascending, na_position="last")
         df = df.head(req.limit)
         rows: list[ScreenerRow] = []
         for r in df.to_dict(orient="records"):

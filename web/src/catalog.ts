@@ -142,6 +142,7 @@ export const COLUMNS: { id: ColumnId; label: string; align: "left" | "right" }[]
 export const DEFAULT_COLUMNS: ColumnId[] = [
   "ticker",
   "price",
+  "dollar_volume",
   "market_cap",
   "as_of",
   "avg_volume",
