@@ -76,7 +76,6 @@ export function App() {
   const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
   const [q, setQ] = useState("");
   const [rows, setRows] = useState<ScreenerRow[]>(demo ? DEMO : []);
-  const [asOf, setAsOf] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [selected, setSelected] = useState<string | null>(null);
@@ -131,7 +130,6 @@ export function App() {
   async function run(nextFilters = filters) {
     if (demo) {
       setRows(DEMO);
-      setAsOf("demo");
       setErr(null);
       return;
     }
@@ -150,7 +148,6 @@ export function App() {
         sort_dir: sortDir,
       });
       setRows(data.rows);
-      setAsOf(data.as_of);
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
       setRows([]);
@@ -362,7 +359,7 @@ export function App() {
           </button>
           <input type="search" placeholder="Symbol" value={q} onChange={(e) => setQ(e.target.value)} />
           <span className="table-meta">
-            {loading ? "Updating…" : `${visible.length} symbols`}
+            {loading || clock?.ingest_running ? "Updating…" : `${visible.length} symbols`}
           </span>
           <div className="table-bar-right">
             <button className="icon-btn" type="button" title="Refresh" onClick={() => void run()}>
