@@ -563,3 +563,60 @@ def test_eod_skips_yahoo_fallback_while_minutes_ingesting(tmp_path):
     assert report["eod_source"] == "defeatbeta"
     assert report["eod_ok"] == 1
 
+
+def test_eod_skips_yahoo_fallback_when_bulk_covers_most(tmp_path):
+    class AlmostAll:
+        def sessions_ready(self, dates):
+            return True
+
+        def fetch_range(self, start, end):
+            bars = []
+            day = start
+            while day <= end:
+                for ticker in ("QQQ", "SPY", "AAPL", "MSFT"):
+                    bars.append(
+                        RawDailyBar(
+                            ticker=ticker,
+                            date=day,
+                            open=1,
+                            high=2,
+                            low=1,
+                            close=1.5,
+                            adj_close=1.5,
+                            volume=10,
+                            source="defeatbeta",
+                        )
+                    )
+                day = date.fromordinal(day.toordinal() + 1)
+            return bars, []
+
+    yahoo_calls = []
+
+    class Counting(Feed):
+        def fetch_eod(self, ticker, start, end):
+            yahoo_calls.append(ticker)
+            return super().fetch_eod(ticker, start, end)
+
+        def fetch_session(self, ticker, start, end):
+            yahoo_calls.append(ticker)
+            return super().fetch_eod(ticker, start, end), []
+
+    wh = DuckDbWarehouse(tmp_path)
+    feed = Counting()
+    svc = DailyUpdateService(
+        wh,
+        SeedUniverse(),
+        feed,
+        feed,
+        Cal(),
+        seed_sessions=1,
+        max_tickers=0,
+        concurrency=1,
+        open_window_minutes=5,
+        eod_bulk=AlmostAll(),
+    )
+    report = svc.run("eod")
+    assert not yahoo_calls
+    assert report["eod_ok"] == 4
+    assert report["status"] in {"ok", "partial"}
+

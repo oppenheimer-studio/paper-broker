@@ -308,7 +308,12 @@ class DailyUpdateService:
                 self._eod_writing = True
             try:
                 eod = self._ingest_eod(chosen, start, end)
-                if eod.fail and not self._minutes_ingesting and not self._yahoo_tripped():
+                if (
+                    eod.fail
+                    and eod.source != "defeatbeta"
+                    and not self._minutes_ingesting
+                    and not self._yahoo_tripped()
+                ):
                     retry_eod = [s for s in yahoo_names if s.ticker in set(eod.fail)]
                     log.info("eod_retry", n=len(retry_eod))
                     extra = self._ingest_eod(retry_eod, start, end, yahoo_only=True)
@@ -642,8 +647,15 @@ class DailyUpdateService:
                 if preferred:
                     out.fail.extend(s.ticker for s in preferred)
                     log.info("eod_skip_preferred", n=len(preferred))
-                if remaining and self._minutes_ingesting:
-                    log.warning("eod_yahoo_fallback_skipped_minutes_busy", n=len(remaining))
+                coverage = len(out.ok) / max(len(securities), 1)
+                if remaining and (self._minutes_ingesting or coverage >= 0.8):
+                    reason = "minutes_busy" if self._minutes_ingesting else "high_coverage"
+                    log.warning(
+                        "eod_yahoo_fallback_skipped",
+                        n=len(remaining),
+                        reason=reason,
+                        coverage=round(coverage, 3),
+                    )
                     out.fail.extend(s.ticker for s in remaining)
                     remaining = []
                 elif remaining:
