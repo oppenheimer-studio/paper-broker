@@ -23,6 +23,8 @@ function cell(row: ScreenerRow, col: ColumnId): string {
       return row.exchange || "—";
     case "market":
       return row.market || "—";
+    case "as_of":
+      return row.as_of || "—";
     case "price":
       return row.price == null ? "—" : `${fmt.price(row.price)} USD`;
     case "rel_vol_at":

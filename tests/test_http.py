@@ -16,6 +16,7 @@ def test_screener_meta_lists_open_relvol(tmp_path):
     assert "open_relvol" in body["presets"]
     assert "rel_vol_at" in body["fields"]
     assert "gt" in body["ops"]
+    assert "us" in body["presets"]
 
 
 def test_root_is_404_without_web_dist(tmp_path, monkeypatch):

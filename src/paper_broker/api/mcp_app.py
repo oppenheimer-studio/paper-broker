@@ -38,16 +38,19 @@ def build_mcp(container: Container) -> FastMCP:
 
     @mcp.tool()
     def run_screener(
-        preset: str = "open_relvol",
+        preset: str = "us",
         filters_json: str = "",
         limit: int = 100,
         as_of: str = "",
+        sort: str = "market_cap",
     ) -> str:
-        """Screen US stocks. Default preset is open_relvol (relvol 5m, price, avg vol, ATR)."""
-        req = ScreenerRequest(preset=preset or None, limit=limit)
+        """Screen US stocks. Default: latest snapshot per symbol, US, sorted by market cap."""
+        req = ScreenerRequest(preset=preset or None, limit=limit, sort=sort or "market_cap")
         if filters_json:
             req = ScreenerRequest.model_validate(json.loads(filters_json))
             req.limit = limit
+            if sort:
+                req.sort = sort
         if as_of:
             req.as_of = date.fromisoformat(as_of)
         rows = container.screener.run(req, container.daily.clock().as_of)

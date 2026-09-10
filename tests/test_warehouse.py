@@ -129,6 +129,50 @@ def test_screener_empty_after_first_filter(tmp_path):
     assert rows == []
 
 
+def test_screener_default_is_latest_us_by_market_cap(tmp_path):
+    wh = DuckDbWarehouse(tmp_path)
+    drafts = [
+        SecurityDraft(ticker="OLD", name="Old", exchange="NYSE"),
+        SecurityDraft(ticker="NEW", name="New", exchange="NYSE"),
+    ]
+    secs = {s.ticker: s for s in wh.upsert_securities(drafts)}
+    old_day = date(2026, 9, 8)
+    new_day = date(2026, 9, 9)
+    wh.write_daily_bars(
+        [
+            DailyBar(
+                security_id=secs["OLD"].security_id,
+                date=old_day,
+                open=10,
+                high=11,
+                low=9,
+                close=10,
+                adj_close=10,
+                volume=1_000_000,
+            ),
+            DailyBar(
+                security_id=secs["NEW"].security_id,
+                date=new_day,
+                open=20,
+                high=21,
+                low=19,
+                close=20,
+                adj_close=20,
+                volume=2_000_000,
+            ),
+        ]
+    )
+    wh.rewrite_derived(old_day, 14, 14, 14, 5)
+    wh.rewrite_derived(new_day, 14, 14, 14, 5)
+    rows = ScreenerService(wh).run(ScreenerRequest())
+    by_ticker = {r.ticker: r for r in rows}
+    assert set(by_ticker) == {"OLD", "NEW"}
+    assert by_ticker["OLD"].as_of == old_day
+    assert by_ticker["NEW"].as_of == new_day
+    pinned = ScreenerService(wh).run(ScreenerRequest(as_of=new_day))
+    assert {r.ticker for r in pinned} == {"NEW"}
+
+
 def test_query_avg_volume(tmp_path):
     wh = DuckDbWarehouse(tmp_path)
     secs = wh.upsert_securities([SecurityDraft(ticker="AAA", name="Aaa", exchange="NYSE")])

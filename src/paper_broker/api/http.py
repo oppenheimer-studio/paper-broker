@@ -107,15 +107,18 @@ def create_app(container: Container) -> FastAPI:
 
     @app.post("/v1/screener")
     def screener(req: ScreenerRequest):
-        as_of = container.daily.clock().as_of
         try:
-            rows = container.screener.run(req, as_of)
+            rows = container.screener.run(req, container.daily.clock().as_of)
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         except Exception as exc:
             log.exception("screener_failed")
             raise HTTPException(status_code=500, detail=str(exc)) from exc
-        return {"as_of": as_of, "n": len(rows), "rows": [r.model_dump() for r in rows]}
+        return {
+            "as_of": req.as_of.isoformat() if req.as_of else None,
+            "n": len(rows),
+            "rows": [r.model_dump(mode="json") for r in rows],
+        }
 
     @app.get("/v1/securities")
     def securities(q: str = Query(min_length=1), limit: int = 20):

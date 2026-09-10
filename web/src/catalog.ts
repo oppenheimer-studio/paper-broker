@@ -127,6 +127,7 @@ export const COLUMNS: { id: ColumnId; label: string; align: "left" | "right" }[]
   { id: "name", label: "Name", align: "left" },
   { id: "exchange", label: "Exchange", align: "left" },
   { id: "market", label: "Market", align: "left" },
+  { id: "as_of", label: "Updated", align: "left" },
   { id: "price", label: "Price", align: "right" },
   { id: "rel_vol_at", label: "Rel vol", align: "right" },
   { id: "rel_vol_at_sessions", label: "Rel vol n", align: "right" },
@@ -141,11 +142,13 @@ export const COLUMNS: { id: ColumnId; label: string; align: "left" | "right" }[]
 export const DEFAULT_COLUMNS: ColumnId[] = [
   "ticker",
   "price",
-  "rel_vol_at",
+  "market_cap",
+  "as_of",
   "avg_volume",
   "atr",
-  "market_cap",
 ];
+
+export const US_UNIVERSE: Filter[] = [{ field: "market", op: "eq", value: "US" }];
 
 export const OPEN_RELVOL: Filter[] = [
   { field: "market", op: "eq", value: "US" },
@@ -155,11 +158,15 @@ export const OPEN_RELVOL: Filter[] = [
   { field: "atr", op: "gt", value: 0.5, lookback: 14 },
 ];
 
-export const BUILTIN_SCANS: { id: string; name: string; filters: Filter[] }[] = [
-  { id: "open_relvol", name: "Open RelVol", filters: OPEN_RELVOL },
+export type BuiltinScan = { id: string; name: string; filters: Filter[]; sort: ColumnId };
+
+export const BUILTIN_SCANS: BuiltinScan[] = [
+  { id: "us", name: "US stocks", filters: US_UNIVERSE, sort: "market_cap" },
+  { id: "open_relvol", name: "Open RelVol", filters: OPEN_RELVOL, sort: "rel_vol_at" },
   {
     id: "liquid_us",
     name: "Liquid US",
+    sort: "dollar_volume",
     filters: [
       { field: "market", op: "eq", value: "US" },
       { field: "price", op: "gt", value: 5 },
@@ -170,6 +177,7 @@ export const BUILTIN_SCANS: { id: string; name: string; filters: Filter[] }[] = 
   {
     id: "high_relvol",
     name: "High RelVol",
+    sort: "rel_vol_at",
     filters: [
       { field: "market", op: "eq", value: "US" },
       { field: "price", op: "gt", value: 5 },
@@ -180,6 +188,7 @@ export const BUILTIN_SCANS: { id: string; name: string; filters: Filter[] }[] = 
   {
     id: "wide_range",
     name: "Wide range",
+    sort: "atr",
     filters: [
       { field: "market", op: "eq", value: "US" },
       { field: "price", op: "gt", value: 10 },

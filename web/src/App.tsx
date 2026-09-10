@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { getClock, getNotifications, runScreener } from "./api";
-import { BUILTIN_SCANS, COLUMNS, DEFAULT_COLUMNS, OPEN_RELVOL } from "./catalog";
+import { BUILTIN_SCANS, COLUMNS, DEFAULT_COLUMNS, US_UNIVERSE } from "./catalog";
 import { FilterBar } from "./FilterBar";
 import { NotificationsPanel } from "./NotificationsPanel";
 import { ScreenerTable } from "./ScreenerTable";
@@ -24,6 +24,7 @@ const DEMO: ScreenerRow[] = [
     dollar_volume: 5_400_000_000,
     market_cap: 3_100_000_000_000,
     first5m_volume: 8_200_000,
+    as_of: "2026-09-09",
   },
   {
     security_id: 2,
@@ -39,6 +40,7 @@ const DEMO: ScreenerRow[] = [
     dollar_volume: 11_200_000_000,
     market_cap: 3_400_000_000_000,
     first5m_volume: 4_100_000,
+    as_of: "2026-09-09",
   },
   {
     security_id: 3,
@@ -54,6 +56,7 @@ const DEMO: ScreenerRow[] = [
     dollar_volume: 9_600_000_000,
     market_cap: 3_180_000_000_000,
     first5m_volume: 3_400_000,
+    as_of: "2026-09-08",
   },
 ];
 
@@ -64,12 +67,12 @@ const SEEN_KEY = "pb.notifications.seen_ts";
 export function App() {
   const demo = new URLSearchParams(window.location.search).has("demo");
   const [clock, setClock] = useState<Clock | null>(null);
-  const [scanId, setScanId] = useState("open_relvol");
-  const [filters, setFilters] = useState<Filter[]>(() => OPEN_RELVOL.map((f) => ({ ...f })));
+  const [scanId, setScanId] = useState("us");
+  const [filters, setFilters] = useState<Filter[]>(() => US_UNIVERSE.map((f) => ({ ...f })));
   const [saved, setSaved] = useState<SavedScan[]>(loadScans);
   const [columns, setColumns] = useState<ColumnId[]>(loadColumns);
   const [showCols, setShowCols] = useState(false);
-  const [sort, setSort] = useState<ColumnId>("rel_vol_at");
+  const [sort, setSort] = useState<ColumnId>("market_cap");
   const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
   const [q, setQ] = useState("");
   const [rows, setRows] = useState<ScreenerRow[]>(demo ? DEMO : []);
@@ -112,7 +115,11 @@ export function App() {
     const custom = saved.find((s) => s.id === id);
     setScanId(id);
     setDirty(false);
-    if (builtin) setFilters(builtin.filters.map((f) => ({ ...f })));
+    if (builtin) {
+      setFilters(builtin.filters.map((f) => ({ ...f })));
+      setSort(builtin.sort);
+      setSortDir("desc");
+    }
     if (custom) {
       setFilters(custom.filters.map((f) => ({ ...f })));
       setSort(custom.sort as ColumnId);
@@ -133,7 +140,7 @@ export function App() {
     try {
       const apiSort =
         sort === "atr_pct" || sort === "ticker" || sort === "name" || sort === "exchange" || sort === "market"
-          ? "rel_vol_at"
+          ? "market_cap"
           : sort;
       const data = await runScreener({
         preset: null,
@@ -156,7 +163,7 @@ export function App() {
     const t = window.setTimeout(() => void run(filters), 280);
     return () => window.clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [filters]);
+  }, [filters, sort, sortDir]);
 
   function onFilters(next: Filter[]) {
     setFilters(next);
@@ -355,7 +362,7 @@ export function App() {
           </button>
           <input type="search" placeholder="Symbol" value={q} onChange={(e) => setQ(e.target.value)} />
           <span className="table-meta">
-            {loading ? "Updating…" : `${visible.length}${asOf ? ` · ${asOf}` : clock?.as_of ? ` · ${clock.as_of}` : ""}`}
+            {loading ? "Updating…" : `${visible.length} symbols`}
           </span>
           <div className="table-bar-right">
             <button className="icon-btn" type="button" title="Refresh" onClick={() => void run()}>

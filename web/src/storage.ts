@@ -2,7 +2,7 @@ import { DEFAULT_COLUMNS } from "./catalog";
 import type { ColumnId, SavedScan } from "./types";
 
 const SCANS_KEY = "pb.screener.scans";
-const COLS_KEY = "pb.screener.columns";
+const COLS_KEY = "pb.screener.columns.v2";
 
 export function loadScans(): SavedScan[] {
   try {

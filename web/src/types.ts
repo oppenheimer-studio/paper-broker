@@ -23,6 +23,7 @@ export type ScreenerRow = {
   name: string;
   exchange: string;
   market: string;
+  as_of?: string | null;
   price: number | null;
   avg_volume: number | null;
   atr: number | null;
@@ -81,6 +82,7 @@ export type ColumnId =
   | "name"
   | "exchange"
   | "market"
+  | "as_of"
   | "price"
   | "rel_vol_at"
   | "rel_vol_at_sessions"

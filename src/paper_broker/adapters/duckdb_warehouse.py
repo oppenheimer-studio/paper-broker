@@ -576,14 +576,18 @@ class DuckDbWarehouse:
         glob = (root / "*.parquet").as_posix()
         return f"read_parquet('{glob}', union_by_name=true)"
 
-    def run_screener(self, req: ScreenerRequest, as_of: date) -> list[ScreenerRow]:
+    def run_screener(self, req: ScreenerRequest, as_of: date | None) -> list[ScreenerRow]:
         filters = resolve_filters(req)
         derived = self._read_hive("derived_daily_data", list(ALLOWED_TABLES["derived_daily_data"]))
         secs = self._read_parquet("securities.parquet", list(ALLOWED_TABLES["securities"]))
         if derived.empty or secs.empty:
             return []
         derived["date"] = pd.to_datetime(derived["date"]).dt.date
-        snap = derived[derived["date"] == as_of].copy()
+        if as_of is not None:
+            snap = derived[derived["date"] == as_of].copy()
+        else:
+            derived = derived.sort_values("date")
+            snap = derived.groupby("security_id", as_index=False).tail(1)
         if snap.empty:
             return []
         df = snap.merge(secs, on="security_id", how="inner")
@@ -616,12 +620,17 @@ class DuckDbWarehouse:
             df = df[mask.fillna(False)]
         if df.empty:
             return []
-        sort = req.sort or "rel_vol_at"
+        sort = req.sort or "market_cap"
+        if sort == "as_of":
+            sort = "date"
         if sort in df.columns:
             df = df.sort_values(sort, ascending=req.sort_dir != "desc", na_position="last")
         df = df.head(req.limit)
         rows: list[ScreenerRow] = []
         for r in df.to_dict(orient="records"):
+            raw_d = r.get("date")
+            if hasattr(raw_d, "date"):
+                raw_d = raw_d.date()
             rows.append(
                 ScreenerRow(
                     security_id=int(r["security_id"]),
@@ -629,6 +638,7 @@ class DuckDbWarehouse:
                     name=str(r.get("name") or r["ticker"]),
                     exchange=str(r.get("exchange") or ""),
                     market=str(r.get("market") or "US"),
+                    as_of=raw_d if isinstance(raw_d, date) else None,
                     price=_f(r.get("price")),
                     avg_volume=_f(r.get("avg_volume")),
                     atr=_f(r.get("atr")),

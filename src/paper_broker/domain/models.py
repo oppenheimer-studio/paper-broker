@@ -158,7 +158,7 @@ class ScreenerRequest(BaseModel):
     preset: str | None = None
     filters: list[ScreenerFilter] = Field(default_factory=list)
     limit: int = Field(default=100, ge=1, le=2000)
-    sort: str | None = "rel_vol_at"
+    sort: str | None = "market_cap"
     sort_dir: str = "desc"
 
 
@@ -168,6 +168,7 @@ class ScreenerRow(BaseModel):
     name: str
     exchange: str
     market: str
+    as_of: date | None = None
     price: float | None
     avg_volume: float | None
     atr: float | None
